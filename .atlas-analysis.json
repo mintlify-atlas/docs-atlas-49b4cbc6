@@ -1,0 +1,277 @@
+{
+  "projectType": "sdk-library",
+  "projectName": "BullMQ",
+  "projectDescription": "Fast, reliable Redis-based distributed queue for Node.js with support for multiple languages",
+  "theme": "aspen",
+  "primaryColor": "#7c7c7c",
+  "lightColor": "#1e1e1e",
+  "darkColor": "#ededed",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "pages": [
+              "introduction",
+              "quick-start",
+              "installation",
+              "architecture"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/connections",
+              "concepts/queues",
+              "concepts/workers",
+              "concepts/jobs",
+              "concepts/events"
+            ]
+          },
+          {
+            "group": "Queue Management",
+            "pages": [
+              "queues/adding-jobs",
+              "queues/adding-jobs-bulk",
+              "queues/auto-removal",
+              "queues/removing-jobs",
+              "queues/global-concurrency",
+              "queues/global-rate-limit",
+              "queues/metadata"
+            ]
+          },
+          {
+            "group": "Workers",
+            "pages": [
+              "workers/overview",
+              "workers/concurrency",
+              "workers/graceful-shutdown",
+              "workers/sandboxed-processors",
+              "workers/pausing-queues",
+              "workers/stalled-jobs",
+              "workers/cancelling-jobs",
+              "workers/auto-removal"
+            ]
+          },
+          {
+            "group": "Job Types & Features",
+            "pages": [
+              "jobs/fifo-lifo",
+              "jobs/job-ids",
+              "jobs/job-data",
+              "jobs/delayed",
+              "jobs/repeatable",
+              "jobs/prioritized",
+              "jobs/deduplication",
+              "jobs/getters",
+              "jobs/removing",
+              "jobs/retrying",
+              "jobs/stalled"
+            ]
+          },
+          {
+            "group": "Job Schedulers",
+            "pages": [
+              "schedulers/overview",
+              "schedulers/repeat-strategies",
+              "schedulers/repeat-options",
+              "schedulers/management"
+            ]
+          },
+          {
+            "group": "Flows",
+            "pages": [
+              "flows/overview",
+              "flows/adding-flows-bulk",
+              "flows/get-flow-tree",
+              "flows/parent-child-dependencies",
+              "flows/fail-parent",
+              "flows/continue-parent",
+              "flows/remove-dependency",
+              "flows/ignore-dependency"
+            ]
+          },
+          {
+            "group": "Advanced Features",
+            "pages": [
+              "advanced/rate-limiting",
+              "advanced/parallelism-concurrency",
+              "advanced/retrying-failing-jobs",
+              "advanced/returning-job-data",
+              "advanced/metrics",
+              "advanced/telemetry"
+            ]
+          },
+          {
+            "group": "Patterns & Best Practices",
+            "pages": [
+              "patterns/named-processor",
+              "patterns/idempotent-jobs",
+              "patterns/throttle-jobs",
+              "patterns/timeout-jobs",
+              "patterns/manual-retrying",
+              "patterns/process-step-jobs",
+              "patterns/stop-retrying-jobs",
+              "patterns/manually-processing-jobs",
+              "patterns/redis-cluster",
+              "patterns/failing-fast-redis-down"
+            ]
+          },
+          {
+            "group": "Redis Integration",
+            "pages": [
+              "redis/compatibility",
+              "redis/dragonfly",
+              "redis/hosting-aws-memorydb",
+              "redis/hosting-aws-elasticache"
+            ]
+          },
+          {
+            "group": "Framework Integration",
+            "pages": [
+              "integrations/nestjs",
+              "integrations/nestjs-producers",
+              "integrations/nestjs-queue-events"
+            ]
+          },
+          {
+            "group": "Production & Operations",
+            "pages": [
+              "operations/going-to-production",
+              "operations/troubleshooting"
+            ]
+          },
+          {
+            "group": "Migration Guides",
+            "pages": [
+              "migrations/overview",
+              "migrations/bull-to-bullmq",
+              "migrations/newer-versions"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Multi-Language Support",
+        "groups": [
+          {
+            "group": "Python",
+            "pages": [
+              "python/introduction",
+              "python/installation",
+              "python/usage",
+              "python/changelog"
+            ]
+          },
+          {
+            "group": "Elixir",
+            "pages": [
+              "elixir/introduction",
+              "elixir/installation",
+              "elixir/usage",
+              "elixir/changelog"
+            ]
+          },
+          {
+            "group": "PHP",
+            "pages": [
+              "php/introduction",
+              "php/installation",
+              "php/usage",
+              "php/changelog"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Core Classes",
+            "pages": [
+              "api/queue",
+              "api/worker",
+              "api/job",
+              "api/flow-producer",
+              "api/queue-events",
+              "api/job-scheduler"
+            ]
+          },
+          {
+            "group": "Specialized Classes",
+            "pages": [
+              "api/queue-getters",
+              "api/redis-connection",
+              "api/repeat",
+              "api/backoffs"
+            ]
+          },
+          {
+            "group": "Interfaces",
+            "pages": [
+              "api/interfaces/queue-options",
+              "api/interfaces/worker-options",
+              "api/interfaces/job-options",
+              "api/interfaces/connection-options",
+              "api/interfaces/flow-job",
+              "api/interfaces/repeatable-options"
+            ]
+          },
+          {
+            "group": "Types & Enums",
+            "pages": [
+              "api/types/processor",
+              "api/types/job-progress",
+              "api/enums/error-code"
+            ]
+          },
+          {
+            "group": "Error Handling",
+            "pages": [
+              "api/errors/unrecoverable-error",
+              "api/errors/delayed-error",
+              "api/errors/rate-limit-error",
+              "api/errors/waiting-children-error"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Distributed job execution with Redis",
+    "FIFO, LIFO, and prioritized jobs",
+    "Delayed and repeatable jobs with cron support",
+    "Parent-child job dependencies (flows)",
+    "Concurrency and rate limiting",
+    "Job retries with exponential backoff",
+    "Sandboxed processor execution",
+    "Multi-language support (Node.js, Python, Elixir, PHP)",
+    "Metrics and telemetry integration",
+    "Horizontal scalability"
+  ],
+  "publicApiSurface": [
+    "Queue",
+    "Worker",
+    "Job",
+    "FlowProducer",
+    "QueueEvents",
+    "JobScheduler",
+    "QueueGetters",
+    "RedisConnection",
+    "Repeat",
+    "Backoffs",
+    "QueueOptions",
+    "WorkerOptions",
+    "JobOptions",
+    "FlowJob",
+    "RepeatableOptions",
+    "Processor",
+    "UnrecoverableError",
+    "DelayedError",
+    "RateLimitError",
+    "WaitingChildrenError"
+  ]
+}
