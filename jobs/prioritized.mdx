@@ -1,0 +1,272 @@
+---
+title: "Prioritized Jobs"
+description: "Control job processing order with priority values"
+---
+
+## Overview
+
+Jobs can include a `priority` option to affect processing order. Using priorities, job processing order is determined by the specified priority value instead of following FIFO or LIFO patterns.
+
+<Warning>
+Adding prioritized jobs is slower than regular jobs, with O(log(n)) complexity relative to the number of jobs in the prioritized set.
+</Warning>
+
+## Priority Values
+
+From `src/classes/job.ts:47`:
+
+```typescript
+export const PRIORITY_LIMIT = 2 ** 21;
+
+export class Job {
+  /**
+   * Ranges from 0 (highest priority) to 2 097 152 (lowest priority). Note that
+   * using priorities has a slight impact on performance,
+   * so do not use it if not required.
+   * @defaultValue 0
+   */
+  priority = 0;
+}
+```
+
+Priorities range from `1` to `2,097,152`, where **lower numbers** have **higher priority**.
+
+<Warning>
+Jobs without a priority assigned get the **highest priority** (priority 0) and are processed before jobs with explicit priorities.
+</Warning>
+
+## Basic Usage
+
+```typescript
+import { Queue } from 'bullmq';
+
+const myQueue = new Queue('Paint');
+
+await myQueue.add('wall', { color: 'pink' }, { priority: 10 });
+await myQueue.add('wall', { color: 'brown' }, { priority: 5 });
+await myQueue.add('wall', { color: 'blue' }, { priority: 7 });
+
+// The wall will be painted first brown (5), then blue (7), and finally pink (10)
+```
+
+<Info>
+If multiple jobs have the same priority value, they are processed in FIFO (First-In, First-Out) order.
+</Info>
+
+## Change Priority
+
+You can change a job's priority after insertion using the `changePriority` method:
+
+```typescript
+import { Job, Queue } from 'bullmq';
+
+const queue = new Queue('Paint');
+const job = await Job.create(queue, 'test2', { foo: 'bar' }, { priority: 16 });
+
+await job.changePriority({
+  priority: 1,
+});
+```
+
+From `src/classes/job.ts:1059`:
+
+```typescript
+/**
+ * Change job priority.
+ *
+ * @param opts - options containing priority and lifo values.
+ * @returns void
+ */
+async changePriority(opts: {
+  priority?: number;
+  lifo?: boolean;
+}): Promise<void> {
+  await this.scripts.changePriority(this.id, opts.priority, opts.lifo);
+  this.priority = opts.priority || 0;
+}
+```
+
+### Change Priority with LIFO
+
+You can also combine priority changes with LIFO ordering:
+
+```typescript
+const job = await Job.create(queue, 'test2', { foo: 'bar' }, { priority: 16 });
+
+await job.changePriority({
+  lifo: true,
+});
+```
+
+## Get Prioritized Jobs
+
+Prioritized is a separate state. Use `getJobs` or `getPrioritized` to retrieve them:
+
+```typescript
+// Method 1: Using getJobs
+const jobs = await queue.getJobs(['prioritized']);
+
+// Method 2: Using getPrioritized
+const jobs2 = await queue.getPrioritized();
+```
+
+## Get Counts per Priority
+
+Retrieve the count of jobs for specific priority values:
+
+```typescript
+const counts = await queue.getCountsPerPriority([1, 0]);
+/*
+{
+  '1': 11,
+  '0': 10
+}
+*/
+```
+
+This method returns:
+- Jobs in `prioritized` status (priorities > 0)
+- Jobs in `waiting` status (priority 0)
+
+## Job Options Interface
+
+From `src/interfaces/base-job-options.ts:13`:
+
+```typescript
+interface DefaultJobOptions {
+  /**
+   * Ranges from 0 (highest priority) to 2 097 152 (lowest priority). Note that
+   * using priorities has a slight impact on performance,
+   * so do not use it if not required.
+   * @defaultValue 0
+   */
+  priority?: number;
+}
+```
+
+## Priority Validation
+
+From `src/classes/job.ts:1597`:
+
+```typescript
+if (this.opts.priority) {
+  if (Math.trunc(this.opts.priority) !== this.opts.priority) {
+    throw new Error(`Priority should not be float`);
+  }
+
+  if (this.opts.priority > PRIORITY_LIMIT) {
+    throw new Error(`Priority should be between 0 and ${PRIORITY_LIMIT}`);
+  }
+}
+```
+
+<Warning>
+Priority values must be:
+- Integers (no decimals)
+- Between 0 and 2,097,152
+</Warning>
+
+## Use Cases
+
+<AccordionGroup>
+
+<Accordion title="VIP Customer Processing">
+  Process VIP customer orders before regular customers:
+  
+  ```typescript
+  const orderQueue = new Queue('orders');
+  
+  // VIP customer order (high priority)
+  await orderQueue.add(
+    'processOrder',
+    { orderId: '123', customerId: 'vip-456' },
+    { priority: 1 }
+  );
+  
+  // Regular customer order (lower priority)
+  await orderQueue.add(
+    'processOrder',
+    { orderId: '124', customerId: 'reg-789' },
+    { priority: 10 }
+  );
+  ```
+</Accordion>
+
+<Accordion title="Severity-Based Alerts">
+  Process critical alerts before warnings:
+  
+  ```typescript
+  const alertQueue = new Queue('alerts');
+  
+  await alertQueue.add(
+    'sendAlert',
+    { message: 'Server down!', level: 'critical' },
+    { priority: 1 }
+  );
+  
+  await alertQueue.add(
+    'sendAlert',
+    { message: 'High CPU usage', level: 'warning' },
+    { priority: 5 }
+  );
+  ```
+</Accordion>
+
+<Accordion title="Dynamic Priority">
+  Adjust priority based on business logic:
+  
+  ```typescript
+  const job = await queue.add('task', data, { priority: 10 });
+  
+  // Later, if conditions change...
+  if (urgentCondition) {
+    await job.changePriority({ priority: 1 });
+  }
+  ```
+</Accordion>
+
+</AccordionGroup>
+
+## Performance Considerations
+
+<CardGroup cols={2}>
+
+<Card title="Complexity" icon="chart-line">
+  O(log(n)) for adding prioritized jobs vs O(1) for regular jobs
+</Card>
+
+<Card title="Use Sparingly" icon="gauge">
+  Only use priorities when necessary for your use case
+</Card>
+
+<Card title="Batch Operations" icon="layer-group">
+  Consider batching jobs of the same priority to reduce overhead
+</Card>
+
+<Card title="Monitor Performance" icon="chart-mixed">
+  Track metrics to ensure priorities don't create bottlenecks
+</Card>
+
+</CardGroup>
+
+## Read More
+
+<CardGroup cols={2}>
+
+<Card title="Faster Priority Jobs" icon="newspaper" href="https://bullmq.io/news/062123/faster-priority-jobs/">
+  Blog post about priority job performance improvements
+</Card>
+
+<Card title="Change Priority API" icon="code" href="https://api.docs.bullmq.io/classes/v5.Job.html#changepriority">
+  changePriority API Reference
+</Card>
+
+<Card title="Get Prioritized API" icon="list" href="https://api.docs.bullmq.io/classes/v5.Queue.html#getprioritized">
+  getPrioritized API Reference
+</Card>
+
+<Card title="Counts per Priority" icon="hashtag" href="https://api.docs.bullmq.io/classes/v5.Queue.html#getcountsperpriority">
+  getCountsPerPriority API Reference
+</Card>
+
+</CardGroup>

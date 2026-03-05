@@ -1,0 +1,122 @@
+---
+title: "Redis Cluster"
+description: "Configure BullMQ to work with Redis Cluster using hash tags"
+---
+
+Bull internals require atomic operations that span different keys. This behavior breaks Redis's rules for cluster configurations. However, it is still possible to use a cluster environment by using the proper bull prefix option as a cluster "hash tag".
+
+## What are Hash Tags?
+
+Hash tags are used to guarantee that certain keys are placed in the same hash slot. A hash tag is defined with brackets. A key that has a substring inside brackets will use that substring to determine in which hash slot the key will be placed.
+
+Read more about hash tags in the [Redis cluster tutorial](https://redis.io/topics/cluster-tutorial).
+
+## Configuration Options
+
+You can use two approaches to make the Queues compatible with Cluster:
+
+### Option 1: Queue Prefix
+
+Define a queue prefix wrapped in brackets:
+
+```typescript
+const queue = new Queue('cluster', {
+  prefix: '{myprefix}',
+});
+```
+
+### Option 2: Queue Name
+
+Wrap the queue name itself in brackets:
+
+```typescript
+const queue = new Queue('{cluster}');
+```
+
+## Multiple Queues
+
+<Warning>
+If you use several queues in the same cluster, you should use different prefixes so that the queues are evenly placed in the cluster nodes, potentially increasing performance and memory usage.
+</Warning>
+
+```typescript
+// Good: Different prefixes for load distribution
+const emailQueue = new Queue('emails', { prefix: '{emails}' });
+const videoQueue = new Queue('videos', { prefix: '{videos}' });
+const imageQueue = new Queue('images', { prefix: '{images}' });
+
+// Bad: Same prefix causes all queues to be on same node
+const emailQueue = new Queue('emails', { prefix: '{myapp}' });
+const videoQueue = new Queue('videos', { prefix: '{myapp}' });
+const imageQueue = new Queue('images', { prefix: '{myapp}' });
+```
+
+## Connecting to Redis Cluster
+
+Use ioredis Cluster connection:
+
+```typescript
+import { Queue } from 'bullmq';
+import Redis from 'ioredis';
+
+const cluster = new Redis.Cluster([
+  {
+    port: 6380,
+    host: '127.0.0.1',
+  },
+  {
+    port: 6381,
+    host: '127.0.0.1',
+  },
+]);
+
+const queue = new Queue('{myqueue}', {
+  connection: cluster,
+});
+```
+
+## Workers and QueueEvents
+
+The same prefix rules apply to Workers and QueueEvents:
+
+```typescript
+const worker = new Worker(
+  '{myqueue}',
+  async job => {
+    // Process job
+  },
+  { connection: cluster },
+);
+
+const queueEvents = new QueueEvents('{myqueue}', {
+  connection: cluster,
+});
+```
+
+## Best Practices
+
+<Steps>
+  <Step title="Use Hash Tags">
+    Always wrap queue names or prefixes in brackets for cluster compatibility
+  </Step>
+  <Step title="Distribute Load">
+    Use different prefixes for different queues to spread load across cluster nodes
+  </Step>
+  <Step title="Consistent Naming">
+    Use the same prefix across Queue, Worker, and QueueEvents for the same queue
+  </Step>
+  <Step title="Test Failover">
+    Test your setup with node failures to ensure proper cluster behavior
+  </Step>
+</Steps>
+
+## Related Resources
+
+<CardGroup cols={2}>
+  <Card title="Connections" icon="link" href="/concepts/connections">
+    Learn about Redis connection configuration
+  </Card>
+  <Card title="Redis Compatibility" icon="server" href="/redis/compatibility">
+    Redis version requirements and compatibility
+  </Card>
+</CardGroup>

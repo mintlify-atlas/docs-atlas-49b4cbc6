@@ -1,0 +1,106 @@
+---
+title: "Manual Retrying"
+description: "Retry a job immediately during processing using moveToWait"
+---
+
+There are situations when it is useful to retry a job right away when it is being processed.
+
+## Using moveToWait
+
+This can be handled using the `moveToWait` method. However, it is important to note that when a job is being processed by a worker, the worker keeps a lock on this job with a certain token value. For the `moveToWait` method to work, we need to pass said token so that it can unlock without error. 
+
+Finally, we need to exit from the processor by throwing a special error (`WaitingError`) that will signal to the worker that the job has been retried so that it does not try to complete (or fail the job) instead.
+
+```typescript
+import { WaitingError, Worker } from 'bullmq';
+
+const worker = new Worker(
+  'queueName',
+  async (job: Job, token?: string) => {
+    try {
+      await doSomething();
+    } catch (error) {
+      await job.moveToWait(token);
+      throw new WaitingError();
+    }
+  },
+  { connection },
+);
+```
+
+## When to Use Manual Retrying
+
+<CardGroup cols={2}>
+  <Card title="Temporary Failures" icon="clock">
+    Retry immediately for transient errors like network blips
+  </Card>
+  <Card title="Rate Limiting" icon="gauge">
+    Move job back to wait when hitting rate limits
+  </Card>
+  <Card title="Resource Contention" icon="lock">
+    Retry when a required resource is temporarily unavailable
+  </Card>
+  <Card title="Quick Recovery" icon="rotate">
+    Retry without waiting for backoff delay
+  </Card>
+</CardGroup>
+
+## Comparison with Standard Retries
+
+| Feature | Manual Retry | Standard Retry |
+|---------|-------------|----------------|
+| Timing | Immediate | Uses backoff delay |
+| Attempts counter | Not incremented | Incremented |
+| Control | Full control in processor | Configured via options |
+| Use case | Transient errors | Persistent errors |
+
+## Example: Retry on Rate Limit
+
+```typescript
+import { WaitingError, Worker, RateLimitError } from 'bullmq';
+
+const worker = new Worker(
+  'api-calls',
+  async (job: Job, token?: string) => {
+    try {
+      const response = await callExternalAPI(job.data);
+      return response;
+    } catch (error) {
+      // Check if it's a rate limit error
+      if (error.response?.status === 429) {
+        // Get retry-after header (in seconds)
+        const retryAfter = error.response.headers['retry-after'];
+        
+        // Apply queue-wide rate limit
+        await queue.rateLimit(retryAfter * 1000);
+        
+        // Move job back to wait
+        await job.moveToWait(token);
+        throw new WaitingError();
+      }
+      
+      // For other errors, let standard retry logic handle it
+      throw error;
+    }
+  },
+  { connection },
+);
+```
+
+<Warning>
+Using `moveToWait` does not increment `attemptsMade`, but it does increment `attemptsStarted`. Be aware of this when checking attempt counts.
+</Warning>
+
+## Related Resources
+
+<CardGroup cols={2}>
+  <Card title="Retrying Failed Jobs" icon="rotate-right" href="/advanced/retrying-failing-jobs">
+    Learn about standard retry strategies
+  </Card>
+  <Card title="Rate Limiting" icon="gauge" href="/advanced/rate-limiting">
+    Implement rate limiting for your queues
+  </Card>
+  <Card title="Move To Wait API" icon="code" href="/api/job#movetowait">
+    API reference for moveToWait method
+  </Card>
+</CardGroup>

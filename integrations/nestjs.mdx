@@ -1,0 +1,298 @@
+---
+title: NestJS Integration
+description: Integrate BullMQ with NestJS using the official @nestjs/bullmq package
+---
+
+BullMQ has official NestJS integration through the `@nestjs/bullmq` package, providing decorators and modules for seamless integration with the NestJS framework.
+
+## Installation
+
+```bash
+npm install @nestjs/bullmq bullmq
+```
+
+## Quick Start
+
+<Steps>
+  <Step title="Import BullModule in your root module">
+    Configure the root BullModule with your Redis connection:
+    
+    ```typescript
+    import { Module } from '@nestjs/common';
+    import { BullModule } from '@nestjs/bullmq';
+    
+    @Module({
+      imports: [
+        BullModule.forRoot({
+          connection: {
+            host: 'localhost',
+            port: 6379,
+          },
+        }),
+      ],
+    })
+    export class AppModule {}
+    ```
+  </Step>
+  
+  <Step title="Register a queue">
+    Register queues using `BullModule.registerQueue()`:
+    
+    ```typescript
+    import { Module } from '@nestjs/common';
+    import { BullModule } from '@nestjs/bullmq';
+    
+    @Module({
+      imports: [
+        BullModule.registerQueue({
+          name: 'audio',
+        }),
+      ],
+    })
+    export class AudioModule {}
+    ```
+  </Step>
+  
+  <Step title="Create a processor">
+    Use the `@Processor` decorator to create a job processor:
+    
+    ```typescript
+    import { Processor, WorkerHost, OnWorkerEvent } from '@nestjs/bullmq';
+    import { Job } from 'bullmq';
+    
+    @Processor('audio')
+    export class AudioProcessor extends WorkerHost {
+      async process(job: Job<any, any, string>): Promise<any> {
+        // Process your job
+        console.log('Processing job:', job.id);
+        console.log('Job data:', job.data);
+        
+        // Return result
+        return { processed: true };
+      }
+      
+      @OnWorkerEvent('completed')
+      onCompleted(job: Job) {
+        console.log(`Job ${job.id} completed`);
+      }
+      
+      @OnWorkerEvent('failed')
+      onFailed(job: Job, error: Error) {
+        console.log(`Job ${job.id} failed:`, error);
+      }
+    }
+    ```
+  </Step>
+  
+  <Step title="Register the processor as a provider">
+    Add the processor to your module's providers:
+    
+    ```typescript
+    @Module({
+      imports: [
+        BullModule.registerQueue({
+          name: 'audio',
+        }),
+      ],
+      providers: [AudioProcessor],
+    })
+    export class AudioModule {}
+    ```
+  </Step>
+</Steps>
+
+## Complete Example
+
+Here's a complete example with a module, processor, and service:
+
+```typescript audio.module.ts
+import { Module } from '@nestjs/common';
+import { BullModule } from '@nestjs/bullmq';
+import { AudioProcessor } from './audio.processor';
+import { AudioService } from './audio.service';
+
+@Module({
+  imports: [
+    BullModule.registerQueue({
+      name: 'audio',
+      connection: {
+        host: 'localhost',
+        port: 6379,
+      },
+    }),
+  ],
+  providers: [AudioProcessor, AudioService],
+  exports: [AudioService],
+})
+export class AudioModule {}
+```
+
+```typescript audio.processor.ts
+import { Processor, WorkerHost, OnWorkerEvent } from '@nestjs/bullmq';
+import { Job } from 'bullmq';
+
+@Processor('audio')
+export class AudioProcessor extends WorkerHost {
+  async process(job: Job<any, any, string>): Promise<any> {
+    // Simulate audio processing
+    const { file, format } = job.data;
+    
+    console.log(`Converting ${file} to ${format}`);
+    
+    // Process audio file
+    await this.convertAudio(file, format);
+    
+    return {
+      success: true,
+      outputFile: `${file}.${format}`,
+    };
+  }
+  
+  private async convertAudio(file: string, format: string) {
+    // Your audio conversion logic
+    await new Promise(resolve => setTimeout(resolve, 1000));
+  }
+  
+  @OnWorkerEvent('completed')
+  onCompleted(job: Job) {
+    console.log(`Audio conversion completed: ${job.id}`);
+  }
+  
+  @OnWorkerEvent('failed')
+  onFailed(job: Job, error: Error) {
+    console.error(`Audio conversion failed: ${job.id}`, error);
+  }
+  
+  @OnWorkerEvent('progress')
+  onProgress(job: Job, progress: number) {
+    console.log(`Job ${job.id} progress: ${progress}%`);
+  }
+}
+```
+
+```typescript audio.service.ts
+import { Injectable } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
+
+@Injectable()
+export class AudioService {
+  constructor(@InjectQueue('audio') private audioQueue: Queue) {}
+  
+  async convertAudio(file: string, format: string) {
+    const job = await this.audioQueue.add('convert', {
+      file,
+      format,
+    });
+    
+    return job.id;
+  }
+}
+```
+
+## Flow Producer
+
+For complex job workflows, register and use a FlowProducer:
+
+```typescript
+import { Module } from '@nestjs/common';
+import { BullModule } from '@nestjs/bullmq';
+
+@Module({
+  imports: [
+    BullModule.registerFlowProducer({
+      name: 'myflow',
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+Inject and use the FlowProducer in your service:
+
+```typescript
+import { Injectable } from '@nestjs/common';
+import { InjectFlowProducer } from '@nestjs/bullmq';
+import { FlowProducer } from 'bullmq';
+
+@Injectable()
+export class WorkflowService {
+  constructor(
+    @InjectFlowProducer('myflow') private flowProducer: FlowProducer,
+  ) {}
+  
+  async createWorkflow() {
+    const flow = await this.flowProducer.add({
+      name: 'root-job',
+      queueName: 'topQueue',
+      data: {},
+      children: [
+        {
+          name: 'child-job-1',
+          data: { idx: 0, foo: 'bar' },
+          queueName: 'childrenQueue',
+        },
+        {
+          name: 'child-job-2',
+          data: { idx: 1, foo: 'baz' },
+          queueName: 'childrenQueue',
+        },
+      ],
+    });
+    
+    return flow;
+  }
+}
+```
+
+## Configuration Options
+
+<AccordionGroup>
+  <Accordion title="Per-Queue Configuration">
+    Override connection settings for specific queues:
+    
+    ```typescript
+    BullModule.registerQueue({
+      name: 'audio',
+      connection: {
+        host: '0.0.0.0',
+        port: 6380,
+      },
+    })
+    ```
+  </Accordion>
+  
+  <Accordion title="Worker Options">
+    Pass worker options through the processor:
+    
+    ```typescript
+    @Processor('audio', {
+      concurrency: 5,
+      limiter: {
+        max: 10,
+        duration: 1000,
+      },
+    })
+    export class AudioProcessor extends WorkerHost {
+      // ...
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Related Resources
+
+<CardGroup cols={2}>
+  <Card title="NestJS Producers" icon="plus" href="/integrations/nestjs-producers">
+    Learn how to add jobs to queues in NestJS
+  </Card>
+  <Card title="Queue Events" icon="bell" href="/integrations/nestjs-queue-events">
+    Listen to queue events in NestJS
+  </Card>
+</CardGroup>
+
+## External Documentation
+
+<Card title="NestJS Queues Documentation" icon="book" href="https://docs.nestjs.com/techniques/queues">
+  Official NestJS documentation for queue integration
+</Card>

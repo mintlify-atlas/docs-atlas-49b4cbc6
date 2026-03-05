@@ -1,0 +1,217 @@
+---
+title: 'FlowProducer'
+description: 'Add jobs with dependencies in tree-like structures (flows)'
+---
+
+## Overview
+
+The FlowProducer class allows you to add jobs with dependencies between them in a tree-like structure called a flow. Whenever the children of a given parent are completed, the parent will be processed.
+
+## Constructor
+
+```typescript
+new FlowProducer(opts?: QueueBaseOptions)
+```
+
+<ParamField path="opts" type="QueueBaseOptions">
+  Configuration options for the flow producer
+</ParamField>
+
+## Example
+
+```typescript
+import { FlowProducer } from 'bullmq';
+
+const flowProducer = new FlowProducer({
+  connection: {
+    host: 'localhost',
+    port: 6379,
+  },
+});
+
+const flow = await flowProducer.add({
+  name: 'parent-job',
+  queueName: 'parentQueue',
+  data: { foo: 'bar' },
+  children: [
+    {
+      name: 'child-job-1',
+      queueName: 'childQueue',
+      data: { baz: 'qux' },
+    },
+    {
+      name: 'child-job-2',
+      queueName: 'childQueue',
+      data: { hello: 'world' },
+    },
+  ],
+});
+```
+
+## Methods
+
+### add
+
+Adds a flow (tree of jobs) to the queue.
+
+```typescript
+add(flow: FlowJob, opts?: FlowOpts): Promise<JobNode>
+```
+
+<ParamField path="flow" type="FlowJob" required>
+  An object with a tree-like structure where children jobs will be processed before their parents
+</ParamField>
+
+<ParamField path="opts" type="FlowOpts">
+  Options that will be applied to the flow
+</ParamField>
+
+<ResponseField name="jobNode" type="JobNode">
+  The job tree structure with created job instances
+</ResponseField>
+
+#### FlowJob Structure
+
+```typescript
+interface FlowJob {
+  name: string;              // Job name
+  queueName: string;         // Queue name where job will be added
+  data?: any;                // Job data
+  prefix?: string;           // Custom prefix for this job's queue
+  opts?: JobsOptions;        // Job options
+  children?: FlowJob[];      // Child jobs (processed before parent)
+}
+```
+
+### addBulk
+
+Adds multiple flows atomically.
+
+```typescript
+addBulk(flows: FlowJob[]): Promise<JobNode[]>
+```
+
+<ParamField path="flows" type="FlowJob[]" required>
+  An array of flow objects
+</ParamField>
+
+<ResponseField name="jobNodes" type="JobNode[]">
+  Array of job tree structures with created job instances
+</ResponseField>
+
+### getFlow
+
+Retrieves a flow by its root job.
+
+```typescript
+getFlow(opts: NodeOpts): Promise<JobNode>
+```
+
+<ParamField path="opts" type="NodeOpts" required>
+  Options for getting a flow
+</ParamField>
+
+#### NodeOpts
+
+```typescript
+interface NodeOpts {
+  queueName: string;      // Root job queue name
+  id: string;             // Root job ID
+  prefix?: string;        // Prefix included in job key
+  depth?: number;         // Maximum depth/levels to visit (default: 10)
+  maxChildren?: number;   // Maximum children per type (default: 20)
+}
+```
+
+### close
+
+Closes the connection.
+
+```typescript
+close(): Promise<void>
+```
+
+### disconnect
+
+Force disconnects the connection.
+
+```typescript
+disconnect(): Promise<void>
+```
+
+## Flow Concepts
+
+### Job Dependencies
+
+In a flow, jobs can have parent-child relationships:
+- **Child jobs** are processed first
+- **Parent jobs** wait for all children to complete
+- Parent jobs can access children's return values
+
+### Cross-Queue Flows
+
+Jobs in a flow can be in different queues:
+
+```typescript
+const flow = await flowProducer.add({
+  name: 'process-video',
+  queueName: 'videos',
+  data: { videoId: '123' },
+  children: [
+    {
+      name: 'transcode',
+      queueName: 'encoding',
+      data: { format: 'mp4' },
+    },
+    {
+      name: 'generate-thumbnail',
+      queueName: 'images',
+      data: { timestamp: 0 },
+    },
+  ],
+});
+```
+
+### Nested Dependencies
+
+Flows can be nested to create complex dependency trees:
+
+```typescript
+const flow = await flowProducer.add({
+  name: 'grandparent',
+  queueName: 'queue1',
+  children: [
+    {
+      name: 'parent',
+      queueName: 'queue2',
+      children: [
+        { name: 'child1', queueName: 'queue3' },
+        { name: 'child2', queueName: 'queue3' },
+      ],
+    },
+  ],
+});
+```
+
+## JobNode Type
+
+```typescript
+interface JobNode {
+  job: Job;              // The job instance
+  children?: JobNode[];  // Child job nodes
+}
+```
+
+## Events
+
+The FlowProducer class extends EventEmitter and emits the following events:
+
+### error
+
+Emitted when an error occurs.
+
+```typescript
+flowProducer.on('error', (error: Error) => {
+  console.error('Flow producer error:', error);
+});
+```

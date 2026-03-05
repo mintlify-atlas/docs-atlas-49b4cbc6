@@ -1,0 +1,312 @@
+---
+title: 'Worker'
+description: 'Process jobs from a queue with concurrency support'
+---
+
+## Overview
+
+The Worker class represents a worker that processes jobs from the queue. As soon as the class is instantiated and a connection to Redis is established, it will start processing jobs.
+
+## Constructor
+
+```typescript
+new Worker(
+  name: string,
+  processor?: Processor | string | URL,
+  opts?: WorkerOptions
+)
+```
+
+<ParamField path="name" type="string" required>
+  The name of the queue to process
+</ParamField>
+
+<ParamField path="processor" type="Processor | string | URL">
+  The processor function or path to processor file
+</ParamField>
+
+<ParamField path="opts" type="WorkerOptions">
+  Configuration options for the worker
+</ParamField>
+
+## Example
+
+```typescript
+import { Worker } from 'bullmq';
+
+const worker = new Worker('myQueue', async (job) => {
+  // Process the job
+  console.log('Processing job', job.id, job.data);
+  return { processed: true };
+}, {
+  connection: {
+    host: 'localhost',
+    port: 6379,
+  },
+  concurrency: 5,
+});
+```
+
+## Properties
+
+### id
+
+```typescript
+readonly id: string
+```
+
+Unique identifier for this worker instance.
+
+### concurrency
+
+```typescript
+concurrency: number
+```
+
+The maximum number of jobs this worker will process concurrently.
+
+### opts
+
+```typescript
+readonly opts: WorkerOptions
+```
+
+The worker configuration options.
+
+## Methods
+
+### run
+
+Starts processing jobs from the queue.
+
+```typescript
+run(): Promise<void>
+```
+
+### pause
+
+Pauses the processing of jobs for this worker.
+
+```typescript
+pause(doNotWaitActive?: boolean): Promise<void>
+```
+
+<ParamField path="doNotWaitActive" type="boolean" default="false">
+  If true, does not wait for active jobs to finish
+</ParamField>
+
+### resume
+
+Resumes processing jobs after being paused.
+
+```typescript
+resume(): void
+```
+
+### isPaused
+
+Checks if the worker is currently paused.
+
+```typescript
+isPaused(): boolean
+```
+
+### isRunning
+
+Checks if the worker is currently running.
+
+```typescript
+isRunning(): boolean
+```
+
+### getNextJob
+
+Manually fetches the next job from the queue.
+
+```typescript
+getNextJob(token: string, opts?: { block?: boolean }): Promise<Job | undefined>
+```
+
+<ParamField path="token" type="string" required>
+  Worker token to assign to retrieved job
+</ParamField>
+
+<ParamField path="opts.block" type="boolean" default="true">
+  Whether to block waiting for a job
+</ParamField>
+
+### cancelJob
+
+Cancels a specific job currently being processed.
+
+```typescript
+cancelJob(jobId: string, reason?: string): boolean
+```
+
+<ParamField path="jobId" type="string" required>
+  The ID of the job to cancel
+</ParamField>
+
+<ParamField path="reason" type="string">
+  Optional reason for cancellation
+</ParamField>
+
+<ResponseField name="cancelled" type="boolean">
+  True if the job was found and cancelled
+</ResponseField>
+
+### cancelAllJobs
+
+Cancels all jobs currently being processed by this worker.
+
+```typescript
+cancelAllJobs(reason?: string): void
+```
+
+<ParamField path="reason" type="string">
+  Optional reason for cancellation
+</ParamField>
+
+### close
+
+Closes the worker and related Redis connections.
+
+```typescript
+close(force?: boolean): Promise<void>
+```
+
+<ParamField path="force" type="boolean" default="false">
+  If true, does not wait for current jobs to be processed
+</ParamField>
+
+### startStalledCheckTimer
+
+Manually starts the stalled job checker.
+
+```typescript
+startStalledCheckTimer(): Promise<void>
+```
+
+## Static Methods
+
+### RateLimitError
+
+Creates a rate limit error to throw from a processor.
+
+```typescript
+static RateLimitError(): Error
+```
+
+## Events
+
+The Worker class extends EventEmitter and emits the following events:
+
+### active
+
+Emitted when a job enters the active state.
+
+```typescript
+worker.on('active', (job: Job, prev: string) => {
+  console.log(`Job ${job.id} is now active`);
+});
+```
+
+### completed
+
+Emitted when a job has successfully completed.
+
+```typescript
+worker.on('completed', (job: Job, result: any, prev: string) => {
+  console.log(`Job ${job.id} completed with result:`, result);
+});
+```
+
+### failed
+
+Emitted when a job has failed.
+
+```typescript
+worker.on('failed', (job: Job | undefined, error: Error, prev: string) => {
+  console.log(`Job ${job?.id} failed:`, error.message);
+});
+```
+
+### progress
+
+Emitted when a job updates its progress.
+
+```typescript
+worker.on('progress', (job: Job, progress: number | object) => {
+  console.log(`Job ${job.id} progress:`, progress);
+});
+```
+
+### drained
+
+Emitted when the queue has drained the waiting list.
+
+```typescript
+worker.on('drained', () => {
+  console.log('Queue is drained');
+});
+```
+
+### paused
+
+Emitted when the worker is paused.
+
+```typescript
+worker.on('paused', () => {
+  console.log('Worker paused');
+});
+```
+
+### resumed
+
+Emitted when the worker is resumed.
+
+```typescript
+worker.on('resumed', () => {
+  console.log('Worker resumed');
+});
+```
+
+### stalled
+
+Emitted when a job has stalled.
+
+```typescript
+worker.on('stalled', (jobId: string, prev: string) => {
+  console.log(`Job ${jobId} stalled`);
+});
+```
+
+### error
+
+Emitted when an error occurs.
+
+```typescript
+worker.on('error', (error: Error) => {
+  console.error('Worker error:', error);
+});
+```
+
+### closing
+
+Emitted when the worker is closing.
+
+```typescript
+worker.on('closing', (msg: string) => {
+  console.log('Worker closing:', msg);
+});
+```
+
+### closed
+
+Emitted when the worker has closed.
+
+```typescript
+worker.on('closed', () => {
+  console.log('Worker closed');
+});
+```

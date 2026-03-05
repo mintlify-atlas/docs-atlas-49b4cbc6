@@ -1,0 +1,419 @@
+---
+title: Architecture
+description: Understand how BullMQ is implemented on top of Redis
+---
+
+In order to use the full potential of BullMQ, it's important to understand the lifecycle of a job and how BullMQ leverages Redis for distributed job processing.
+
+## Job Lifecycle
+
+From the moment a producer calls the `add` method on a Queue instance, a job enters a lifecycle where it transitions through different states until its completion or failure.
+
+### Queue-based Job Lifecycle
+
+When a job is added to a queue using `queue.add()`, it can be in one of three initial states:
+
+<Steps>
+
+### Wait State
+
+All jobs enter a **waiting list** before they can be processed. This is the default state for new jobs.
+
+```typescript
+const queue = new Queue('tasks');
+
+// Job enters 'wait' state
+await queue.add('process-data', { data: 'value' });
+```
+
+### Prioritized State
+
+Jobs with a priority value are placed in a **prioritized set** where higher priority jobs (lower priority number) are processed first.
+
+```typescript
+// Higher priority job (processed first)
+await queue.add('urgent-task', { data: 'urgent' }, { priority: 1 });
+
+// Lower priority job (processed later)
+await queue.add('normal-task', { data: 'normal' }, { priority: 10 });
+```
+
+<Note>
+Priorities range from `0` to `2^21`, where **0 is the highest priority**. This follows Unix process priority standards where a higher number means less priority.
+</Note>
+
+### Delayed State
+
+Jobs with a delay are placed in a **delayed set** and wait for their timeout before being promoted to the waiting list or prioritized set.
+
+```typescript
+// Job waits 5 seconds before being processed
+await queue.add('delayed-task', { data: 'later' }, { delay: 5000 });
+```
+
+</Steps>
+
+### Active State
+
+Once a worker picks up a job, it enters the **active** state. The job remains active while the worker's process function executes.
+
+```typescript
+import { Worker, Job } from 'bullmq';
+
+const worker = new Worker('tasks', async (job: Job) => {
+  // Job is now in 'active' state
+  console.log(`Processing job ${job.id}`);
+  
+  // Can take unlimited time (but should have reasonable timeouts)
+  await processData(job.data);
+  
+  // Job moves to 'completed' or 'failed' based on outcome
+});
+```
+
+### Final States
+
+Jobs end in one of two final states:
+
+- **Completed** - Job processed successfully and returned a value
+- **Failed** - Job threw an exception during processing
+
+```typescript
+worker.on('completed', (job: Job, result: any) => {
+  console.log(`Job ${job.id} completed with result:`, result);
+});
+
+worker.on('failed', (job: Job | undefined, err: Error) => {
+  console.error(`Job ${job?.id} failed:`, err.message);
+  // Failed jobs can be automatically retried if configured
+});
+```
+
+## Flow Producer Job Lifecycle
+
+When jobs are added via a FlowProducer (for parent-child dependencies), there's an additional state:
+
+### Waiting-Children State
+
+Jobs that have children enter the **waiting-children** state. These jobs wait for all their children to complete before being processed.
+
+```typescript
+import { FlowProducer } from 'bullmq';
+
+const flow = new FlowProducer();
+
+await flow.add({
+  name: 'parent-job',
+  queueName: 'parent-queue',
+  data: { task: 'parent' },
+  children: [
+    {
+      name: 'child-job-1',
+      queueName: 'child-queue',
+      data: { task: 'child-1' },
+    },
+    {
+      name: 'child-job-2',
+      queueName: 'child-queue',
+      data: { task: 'child-2' },
+    },
+  ],
+});
+```
+
+<Steps>
+
+### Children Process First
+
+Child jobs are added to their respective queues and processed normally.
+
+### Parent Waits
+
+The parent job remains in **waiting-children** state until all children complete.
+
+### Parent Processes
+
+Once the last child completes, the parent job is automatically moved to:
+- The waiting list (if no delay or priority)
+- The delayed set (if delay is provided)
+- The prioritized set (if delay is 0 and priority > 0)
+
+</Steps>
+
+## Redis Data Structures
+
+BullMQ leverages Redis data structures for efficient job management:
+
+### Lists
+
+- **Wait list** - FIFO queue of jobs ready to be processed
+- Used for standard job ordering
+
+### Sorted Sets
+
+- **Delayed set** - Jobs sorted by timestamp, promoted when delay expires
+- **Prioritized set** - Jobs sorted by priority value
+- **Active set** - Currently processing jobs with timestamps for stall detection
+
+### Hashes
+
+- **Job data** - Each job's data, options, and state stored in a hash
+- **Queue metadata** - Queue configuration and statistics
+
+### Keys
+
+BullMQ uses Redis key prefixes to organize data:
+
+```
+bull:{queueName}:jobs      # Job hashes
+bull:{queueName}:wait      # Waiting list
+bull:{queueName}:active    # Active jobs
+bull:{queueName}:completed # Completed jobs
+bull:{queueName}:failed    # Failed jobs
+bull:{queueName}:delayed   # Delayed jobs
+bull:{queueName}:priority  # Prioritized jobs
+```
+
+<Tip>
+You can customize the prefix using the `prefix` option when creating a Queue or Worker:
+
+```typescript
+const queue = new Queue('tasks', {
+  prefix: 'myapp',
+});
+// Keys will be: myapp:tasks:wait, myapp:tasks:active, etc.
+```
+</Tip>
+
+## Atomic Operations
+
+BullMQ uses Redis Lua scripts to ensure atomic operations:
+
+- **Adding jobs** - Atomically adds job data and enqueues it
+- **Moving jobs** - Atomically moves jobs between states
+- **Processing jobs** - Atomically claims jobs for processing
+- **Completing jobs** - Atomically marks completion and handles dependencies
+
+This guarantees:
+- No race conditions between multiple workers
+- Exactly-once processing semantics (in the best case)
+- Consistent state even with crashes
+
+## Stalled Jobs
+
+BullMQ automatically detects and recovers stalled jobs:
+
+<Steps>
+
+### Detection
+
+Workers periodically check for jobs in the active state that haven't been updated within the stall timeout.
+
+```typescript
+const worker = new Worker('tasks', async (job) => {
+  // Process job
+}, {
+  stalledInterval: 30000, // Check every 30 seconds
+  maxStalledCount: 1,      // Max times a job can be stalled
+});
+```
+
+### Recovery
+
+Stalled jobs are automatically moved back to the wait state to be processed again by another worker.
+
+### Prevention
+
+Workers send a heartbeat to Redis while processing jobs to prevent false stall detection.
+
+</Steps>
+
+<Warning>
+If a job is stalled more than `maxStalledCount` times, it will be moved to the failed state to prevent infinite loops.
+</Warning>
+
+## Connection Architecture
+
+Each BullMQ class requires Redis connections:
+
+### Queue
+
+- Uses **1 connection** for adding jobs and management operations
+- Connection can be reused across multiple Queue instances
+
+```typescript
+import IORedis from 'ioredis';
+import { Queue } from 'bullmq';
+
+const connection = new IORedis();
+
+// Reuse connection across queues
+const queue1 = new Queue('tasks1', { connection });
+const queue2 = new Queue('tasks2', { connection });
+```
+
+### Worker
+
+- Uses **2 connections**:
+  - One for blocking operations (BZPOPMIN)
+  - One for job processing and management
+- Connection can be reused, but worker creates internal blocking connection
+
+```typescript
+import IORedis from 'ioredis';
+import { Worker } from 'bullmq';
+
+const connection = new IORedis({ maxRetriesPerRequest: null });
+
+// Worker creates additional internal blocking connection
+const worker = new Worker('tasks', async (job) => {
+  // Process
+}, { connection });
+```
+
+<Note>
+Workers require `maxRetriesPerRequest: null` to ensure they keep retrying failed commands indefinitely and don't stop processing on temporary Redis connection issues.
+</Note>
+
+### QueueEvents
+
+- Uses **1 blocking connection** for listening to events
+- Cannot reuse connections (requires dedicated blocking connection)
+
+```typescript
+import { QueueEvents } from 'bullmq';
+
+const queueEvents = new QueueEvents('tasks', {
+  connection: {
+    host: 'localhost',
+    port: 6379,
+  },
+});
+```
+
+### FlowProducer
+
+- Uses **1 connection** for adding job flows
+- Connection can be reused
+
+## Scaling Architecture
+
+BullMQ is designed for horizontal scalability:
+
+### Multiple Workers
+
+Add more workers to increase throughput:
+
+```typescript
+// Worker 1 - Server A
+const worker1 = new Worker('tasks', processJob, { connection, concurrency: 5 });
+
+// Worker 2 - Server B
+const worker2 = new Worker('tasks', processJob, { connection, concurrency: 5 });
+
+// Worker 3 - Server C
+const worker3 = new Worker('tasks', processJob, { connection, concurrency: 5 });
+
+// All workers consume from the same queue
+// Total concurrency: 15 jobs processed simultaneously
+```
+
+### Multiple Queues
+
+Separate concerns with multiple queues:
+
+```typescript
+const emailQueue = new Queue('emails');
+const imageQueue = new Queue('images');
+const videoQueue = new Queue('videos');
+
+// Dedicated workers for each queue
+const emailWorker = new Worker('emails', processEmail);
+const imageWorker = new Worker('images', processImage, { concurrency: 10 });
+const videoWorker = new Worker('videos', processVideo, { concurrency: 2 });
+```
+
+### Redis Cluster
+
+For very high throughput, use Redis Cluster:
+
+```typescript
+import { Cluster } from 'ioredis';
+import { Queue, Worker } from 'bullmq';
+
+const connection = new Cluster([
+  { host: 'redis-node-1', port: 6379 },
+  { host: 'redis-node-2', port: 6379 },
+  { host: 'redis-node-3', port: 6379 },
+]);
+
+const queue = new Queue('tasks', { connection });
+const worker = new Worker('tasks', processJob, { connection });
+```
+
+<Tip>
+Redis Cluster provides automatic sharding and high availability. Each queue is stored on a single cluster node based on the queue name hash.
+</Tip>
+
+## Polling-Free Design
+
+Unlike many job queue systems, BullMQ uses a **polling-free design** for maximum efficiency:
+
+- Workers use Redis's blocking `BZPOPMIN` command to wait for jobs
+- No CPU waste checking for new jobs
+- Instant job processing as soon as jobs are added
+- Minimal latency between job addition and processing
+
+```typescript
+// Worker blocks waiting for jobs (no polling)
+const worker = new Worker('tasks', async (job) => {
+  // Processes immediately when job is added
+});
+
+// Job is available to worker instantly
+await queue.add('task', { data: 'value' });
+```
+
+## Performance Characteristics
+
+### Throughput
+
+- Single Redis instance: **10,000+ jobs/second**
+- With Dragonfly: **100,000+ jobs/second**
+- Limited primarily by Redis performance and network latency
+
+### Latency
+
+- Job addition to processing: **< 1ms** (local Redis)
+- Job addition to processing: **< 10ms** (remote Redis)
+- Minimal overhead from BullMQ itself
+
+### Memory
+
+- Job data stored in Redis with configurable retention
+- Completed jobs can be automatically removed
+- Failed jobs can be kept for debugging
+
+```typescript
+await queue.add('task', { data: 'value' }, {
+  removeOnComplete: true,  // Remove after completion
+  removeOnFail: false,     // Keep failed jobs for inspection
+});
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Workers" icon="gear" href="/guide/workers">
+    Deep dive into worker configuration and features
+  </Card>
+  <Card title="Jobs" icon="briefcase" href="/guide/jobs">
+    Learn about job options and lifecycle
+  </Card>
+  <Card title="Flows" icon="diagram-project" href="/guide/flows">
+    Create complex job dependencies
+  </Card>
+  <Card title="Going to Production" icon="rocket" href="/guide/going-to-production">
+    Best practices for production deployments
+  </Card>
+</CardGroup>

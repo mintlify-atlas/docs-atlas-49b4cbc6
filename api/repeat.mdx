@@ -1,0 +1,189 @@
+---
+title: 'Repeat'
+description: 'Manage repeatable jobs (legacy - use JobScheduler instead)'
+---
+
+<Warning>
+  The Repeat class is deprecated and will be removed in v6. Use [JobScheduler](/api/job-scheduler) instead.
+</Warning>
+
+## Overview
+
+The Repeat class manages repeatable jobs that execute at specified intervals using cron patterns or fixed delays.
+
+<Note>
+  Access via `queue.repeat` property. For new implementations, use `queue.jobScheduler` instead.
+</Note>
+
+## Constructor
+
+```typescript
+new Repeat(
+  name: string,
+  opts: RepeatBaseOptions
+)
+```
+
+## Methods
+
+### updateRepeatableJob
+
+Updates or creates a repeatable job.
+
+```typescript
+updateRepeatableJob<T, R, N>(
+  name: N,
+  data: T,
+  opts: JobsOptions,
+  config: { override: boolean }
+): Promise<Job<T, R, N> | undefined>
+```
+
+### getRepeatableJobs
+
+Gets all repeatable jobs.
+
+```typescript
+getRepeatableJobs(
+  start?: number,
+  end?: number,
+  asc?: boolean
+): Promise<RepeatableJob[]>
+```
+
+<ParamField path="start" type="number" default="0">
+  Offset of first job to return
+</ParamField>
+
+<ParamField path="end" type="number" default="-1">
+  Offset of last job to return
+</ParamField>
+
+<ParamField path="asc" type="boolean" default="false">
+  Return in ascending order by next execution time
+</ParamField>
+
+### removeRepeatable
+
+Removes a repeatable job.
+
+```typescript
+removeRepeatable(
+  name: string,
+  repeat: RepeatOptions,
+  jobId?: string
+): Promise<number>
+```
+
+<ParamField path="name" type="string" required>
+  Job name
+</ParamField>
+
+<ParamField path="repeat" type="RepeatOptions" required>
+  Repeat options (must match the ones used when creating)
+</ParamField>
+
+<ParamField path="jobId" type="string">
+  Optional job ID
+</ParamField>
+
+### removeRepeatableByKey
+
+Removes a repeatable job by its key.
+
+```typescript
+removeRepeatableByKey(key: string): Promise<number>
+```
+
+<ParamField path="key" type="string" required>
+  The repeatable job key (obtained from getRepeatableJobs)
+</ParamField>
+
+### getRepeatableCount
+
+Gets the count of repeatable jobs.
+
+```typescript
+getRepeatableCount(): Promise<number>
+```
+
+## RepeatableJob
+
+```typescript
+interface RepeatableJob {
+  key: string;          // Unique key for the repeatable job
+  name: string;         // Job name
+  id?: string;          // Optional job ID
+  endDate?: number;     // End date timestamp
+  tz?: string;          // Timezone
+  pattern?: string;     // Cron pattern
+  every?: string;       // Interval
+  next?: number;        // Next execution timestamp
+}
+```
+
+## Migration to JobScheduler
+
+To migrate from Repeat to JobScheduler:
+
+### Old (Repeat)
+
+```typescript
+await queue.add(
+  'task',
+  { data: 'value' },
+  {
+    repeat: {
+      pattern: '0 * * * *',
+    },
+  }
+);
+
+const repeatableJobs = await queue.getRepeatableJobs();
+await queue.removeRepeatable('task', { pattern: '0 * * * *' });
+```
+
+### New (JobScheduler)
+
+```typescript
+await queue.upsertJobScheduler(
+  'task-scheduler',
+  { pattern: '0 * * * *' },
+  {
+    name: 'task',
+    data: { data: 'value' },
+  }
+);
+
+const schedulers = await queue.getJobSchedulers();
+await queue.removeJobScheduler('task-scheduler');
+```
+
+## Example
+
+```typescript
+import { Queue } from 'bullmq';
+
+const queue = new Queue('myQueue', {
+  connection: {
+    host: 'localhost',
+    port: 6379,
+  },
+});
+
+// Access the repeat instance
+const repeat = await queue.repeat;
+
+// Get all repeatable jobs
+const jobs = await repeat.getRepeatableJobs();
+
+console.log(jobs);
+// [
+//   {
+//     key: 'task:::0 * * * *',
+//     name: 'task',
+//     pattern: '0 * * * *',
+//     next: 1234567890000
+//   }
+// ]
+```

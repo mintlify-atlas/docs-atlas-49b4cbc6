@@ -1,0 +1,48 @@
+---
+title: Changelog
+description: Release history for BullMQ PHP
+---
+
+## [1.0.1](https://github.com/taskforcesh/bullmq/compare/vphp1.0.0...vphp1.0.1) (2025-12-19)
+
+### Bug Fixes
+
+* **release:** correct php release condition check [php] ([#3617](https://github.com/taskforcesh/bullmq/issues/3617)) ([7ac421c](https://github.com/taskforcesh/bullmq/commit/7ac421cb2e754ba262a18bb17d47f15fb22a6962))
+
+## 1.0.0 (2025-12-09)
+
+### Features
+
+Initial release of BullMQ for PHP:
+
+- **Queue Client** - Add single and bulk jobs to BullMQ queues
+- **Job Options** - Full support for delays, priorities, retries, and backoff strategies
+- **Queue Management** - Pause, resume, drain, and obliterate operations
+- **Job Introspection** - Get jobs by ID, state, and retrieve queue statistics
+- **Job Cleanup** - Clean old jobs with configurable grace periods
+- **Retry Operations** - Retry failed jobs and promote delayed jobs
+- **Connection Management** - Support for connection arrays, URIs, and shared connections
+- **Parent-Child Jobs** - Support for job flows and dependencies
+- **Priority Queues** - Get job counts grouped by priority
+- **Custom Prefixes** - Configure Redis key prefixes
+
+### Compatibility
+
+- Compatible with BullMQ Node.js v5.x
+- Jobs can be processed by workers in Node.js, Python, and Elixir
+- Requires PHP 8.1+
+- Requires Redis 5.0+ (6.2+ recommended)
+
+### Dependencies
+
+- predis/predis ^2.0 - Redis client
+- ramsey/uuid ^4.7 - UUID generation
+- rybakit/msgpack ^0.9 - MessagePack serialization
+
+### Note
+
+This package provides Queue functionality only (producer side). For job processing, use BullMQ workers in Node.js, Python, or Elixir.
+
+<Card title="View Full Changelog" icon="github" href="https://github.com/taskforcesh/bullmq/blob/master/php/CHANGELOG.md">
+  See the complete version history on GitHub
+</Card>

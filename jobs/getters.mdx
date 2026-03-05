@@ -1,0 +1,396 @@
+---
+title: "Getters"
+description: "Retrieve job information and statistics from the queue"
+---
+
+## Overview
+
+When jobs are added to a queue, they transition through different states during their lifecycle. BullMQ provides methods to retrieve information and jobs from these various states.
+
+<Frame>
+  <img src="/images/job-lifecycle.png" alt="Diagram of the lifecycle of a BullMQ job in the queue" />
+</Frame>
+
+## Job Counts
+
+Get the number of jobs in specific statuses:
+
+<CodeGroup>
+
+```typescript TypeScript
+import { Queue } from 'bullmq';
+
+const myQueue = new Queue('Paint');
+
+const counts = await myQueue.getJobCounts('wait', 'completed', 'failed');
+
+// Returns an object like: { wait: number, completed: number, failed: number }
+```
+
+```python Python
+from bullmq import Queue
+
+myQueue = Queue('Paint')
+
+counts = await myQueue.getJobCounts('wait', 'completed', 'failed')
+
+# Returns: { wait: number, completed: number, failed: number }
+```
+
+</CodeGroup>
+
+### Available Job States
+
+From the Job class documentation:
+
+- `completed` - Jobs that have finished successfully
+- `failed` - Jobs that have failed after all retry attempts
+- `delayed` - Jobs waiting for their delay time to expire
+- `active` - Jobs currently being processed
+- `wait` - Jobs waiting to be processed
+- `waiting-children` - Jobs waiting for child jobs to complete
+- `prioritized` - Jobs with priority > 0 waiting to be processed
+- `paused` - Jobs in a paused queue
+- `repeat` - Repeatable job configurations
+
+## Get Jobs
+
+Retrieve jobs with pagination:
+
+<CodeGroup>
+
+```typescript TypeScript
+import { Queue } from 'bullmq';
+
+const myQueue = new Queue('Paint');
+
+// Get the oldest 100 completed jobs
+const completed = await myQueue.getJobs(['completed'], 0, 100, true);
+
+// Get the newest 50 failed jobs
+const failed = await myQueue.getJobs(['failed'], 0, 50, false);
+
+// Get jobs from multiple states
+const jobs = await myQueue.getJobs(['wait', 'active', 'delayed'], 0, 100, true);
+```
+
+```python Python
+from bullmq import Queue
+
+myQueue = Queue('Paint')
+
+# Get the oldest 100 completed jobs
+completed = await myQueue.getJobs(['completed'], 0, 100, True)
+
+# Get the newest 50 failed jobs
+failed = await myQueue.getJobs(['failed'], 0, 50, False)
+```
+
+</CodeGroup>
+
+Parameters:
+- `types` - Array of job states to retrieve
+- `start` - Starting index (0-based)
+- `end` - Ending index
+- `asc` - If `true`, returns oldest first; if `false`, returns newest first
+
+## Get Jobs by State
+
+BullMQ provides convenience methods for specific states:
+
+```typescript
+import { Queue } from 'bullmq';
+
+const queue = new Queue('Paint');
+
+// Get waiting jobs
+const waiting = await queue.getWaiting();
+
+// Get active jobs
+const active = await queue.getActive();
+
+// Get completed jobs
+const completed = await queue.getCompleted();
+
+// Get failed jobs
+const failed = await queue.getFailed();
+
+// Get delayed jobs
+const delayed = await queue.getDelayed();
+
+// Get prioritized jobs
+const prioritized = await queue.getPrioritized();
+```
+
+## Job State Checks
+
+From `src/classes/job.ts:971-1008`:
+
+```typescript
+/**
+ * @returns true if the job has completed.
+ */
+isCompleted(): Promise<boolean> {
+  return this.isInZSet('completed');
+}
+
+/**
+ * @returns true if the job has failed.
+ */
+isFailed(): Promise<boolean> {
+  return this.isInZSet('failed');
+}
+
+/**
+ * @returns true if the job is delayed.
+ */
+isDelayed(): Promise<boolean> {
+  return this.isInZSet('delayed');
+}
+
+/**
+ * @returns true if the job is waiting for children.
+ */
+isWaitingChildren(): Promise<boolean> {
+  return this.isInZSet('waiting-children');
+}
+
+/**
+ * @returns true of the job is active.
+ */
+isActive(): Promise<boolean> {
+  return this.isInList('active');
+}
+
+/**
+ * @returns true if the job is waiting.
+ */
+async isWaiting(): Promise<boolean> {
+  return (await this.isInList('wait')) || (await this.isInList('paused'));
+}
+```
+
+### Get Current State
+
+From `src/classes/job.ts:1030`:
+
+```typescript
+/**
+ * Get current state.
+ *
+ * @returns Returns one of these values:
+ * 'completed', 'failed', 'delayed', 'active', 'waiting', 'waiting-children', 'unknown'.
+ */
+getState(): Promise<JobState | 'unknown'> {
+  return this.scripts.getState(this.id);
+}
+```
+
+Example usage:
+
+```typescript
+import { Job, Queue } from 'bullmq';
+
+const queue = new Queue('Paint');
+const job = await queue.add('wall', { color: 'pink' });
+
+const state = await job.getState();
+console.log(state); // 'waiting', 'active', 'completed', etc.
+
+// Check specific states
+if (await job.isCompleted()) {
+  console.log('Job has completed!');
+}
+
+if (await job.isDelayed()) {
+  console.log('Job is delayed');
+}
+```
+
+## Get Job by ID
+
+Retrieve a specific job by its ID:
+
+```typescript
+import { Job, Queue } from 'bullmq';
+
+const queue = new Queue('Paint');
+
+const job = await Job.fromId(queue, 'job-id-123');
+
+if (job) {
+  console.log(job.data);
+  console.log(await job.getState());
+} else {
+  console.log('Job not found');
+}
+```
+
+From `src/classes/job.ts:470`:
+
+```typescript
+/**
+ * Fetches a Job from the queue given the passed job id.
+ *
+ * @param queue - the queue where the job belongs to.
+ * @param jobId - the job id.
+ * @returns
+ */
+static async fromId<T = any, R = any, N extends string = string>(
+  queue: MinimalQueue,
+  jobId: string,
+): Promise<Job<T, R, N> | undefined> {
+  // jobId can be undefined if moveJob returns undefined
+  if (jobId) {
+    const client = await queue.client;
+    const jobData = await client.hgetall(queue.toKey(jobId));
+    return isEmpty(jobData)
+      ? undefined
+      : this.fromJSON<T, R, N>(
+          queue,
+          (<unknown>jobData) as JobJsonRaw,
+          jobId,
+        );
+  }
+}
+```
+
+## Get Counts per Priority
+
+For prioritized jobs, get counts for specific priority levels:
+
+```typescript
+const counts = await queue.getCountsPerPriority([0, 1, 5, 10]);
+/*
+{
+  '0': 15,  // waiting status (priority 0)
+  '1': 11,  // prioritized status
+  '5': 8,
+  '10': 3
+}
+*/
+```
+
+## Pagination Example
+
+Retrieve all jobs in batches:
+
+```typescript
+import { Queue } from 'bullmq';
+
+const queue = new Queue('Paint');
+
+async function getAllCompletedJobs() {
+  const allJobs = [];
+  let start = 0;
+  const batchSize = 100;
+  
+  while (true) {
+    const jobs = await queue.getJobs(
+      ['completed'],
+      start,
+      start + batchSize - 1,
+      true
+    );
+    
+    if (jobs.length === 0) break;
+    
+    allJobs.push(...jobs);
+    start += batchSize;
+  }
+  
+  return allJobs;
+}
+
+const allCompleted = await getAllCompletedJobs();
+console.log(`Total completed jobs: ${allCompleted.length}`);
+```
+
+## Common Patterns
+
+<AccordionGroup>
+
+<Accordion title="Monitor Queue Health">
+  Track queue statistics:
+  
+  ```typescript
+  const queue = new Queue('Paint');
+  
+  async function getQueueStats() {
+    const counts = await queue.getJobCounts(
+      'wait',
+      'active',
+      'completed',
+      'failed',
+      'delayed'
+    );
+    
+    return {
+      waiting: counts.wait,
+      active: counts.active,
+      completed: counts.completed,
+      failed: counts.failed,
+      delayed: counts.delayed,
+      total: Object.values(counts).reduce((a, b) => a + b, 0),
+    };
+  }
+  
+  const stats = await getQueueStats();
+  console.log(stats);
+  ```
+</Accordion>
+
+<Accordion title="Find Failed Jobs">
+  Retrieve and analyze failed jobs:
+  
+  ```typescript
+  const failed = await queue.getFailed(0, 100);
+  
+  for (const job of failed) {
+    console.log(`Job ${job.id} failed: ${job.failedReason}`);
+    console.log(`Attempts made: ${job.attemptsMade}`);
+    console.log(`Data:`, job.data);
+  }
+  ```
+</Accordion>
+
+<Accordion title="Check Job Status">
+  Track a specific job's progress:
+  
+  ```typescript
+  const job = await queue.add('wall', { color: 'pink' });
+  
+  const checkStatus = setInterval(async () => {
+    const state = await job.getState();
+    console.log(`Job ${job.id} is ${state}`);
+    
+    if (state === 'completed' || state === 'failed') {
+      clearInterval(checkStatus);
+    }
+  }, 1000);
+  ```
+</Accordion>
+
+</AccordionGroup>
+
+## Read More
+
+<CardGroup cols={2}>
+
+<Card title="Get Job Counts" icon="hashtag" href="https://api.docs.bullmq.io/classes/v5.Queue.html#getjobcounts">
+  getJobCounts API Reference
+</Card>
+
+<Card title="Get Jobs" icon="list" href="https://api.docs.bullmq.io/classes/v5.Queue.html#getjobs">
+  getJobs API Reference
+</Card>
+
+<Card title="Job State" icon="circle-dot" href="https://api.docs.bullmq.io/classes/v5.Job.html#getstate">
+  getState API Reference
+</Card>
+
+<Card title="From ID" icon="fingerprint" href="https://api.docs.bullmq.io/classes/v5.Job.html#fromid">
+  Job.fromId API Reference
+</Card>
+
+</CardGroup>

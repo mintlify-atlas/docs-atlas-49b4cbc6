@@ -1,0 +1,235 @@
+---
+title: 'Get Flow Tree'
+description: 'Retrieve job hierarchies with all children and grandchildren'
+---
+
+In some situations, you need to get a job and all of its children, grandchildren, and so on. The `getFlow` method allows you to retrieve the entire job hierarchy.
+
+## Using getFlow
+
+The pattern to solve this requirement consists of using the [`getFlow`](https://api.docs.bullmq.io/classes/v5.FlowProducer.html#getflow) method:
+
+```typescript
+const flow = new FlowProducer({ connection });
+
+const originalTree = await flow.add({
+  name: 'root-job',
+  queueName: 'topQueueName',
+  data: {},
+  children: [
+    {
+      name,
+      data: { idx: 0, foo: 'bar' },
+      queueName: 'childrenQueueName',
+      children: [
+        {
+          name,
+          data: { idx: 4, foo: 'baz' },
+          queueName: 'grandchildrenQueueName',
+        },
+      ],
+    },
+    {
+      name,
+      data: { idx: 2, foo: 'foo' },
+      queueName: 'childrenQueueName',
+    },
+    {
+      name,
+      data: { idx: 3, foo: 'bis' },
+      queueName: 'childrenQueueName',
+    },
+  ],
+});
+
+const { job: topJob } = originalTree;
+
+const tree = await flow.getFlow({
+  id: topJob.id,
+  queueName: 'topQueueName',
+});
+
+const { children, job } = tree;
+```
+
+<Info>
+  Each child may have a `job` property and, if they have children as well, they would have the `children` property.
+</Info>
+
+## NodeOpts Interface
+
+The `getFlow` method accepts a `NodeOpts` interface with the following properties:
+
+```typescript
+interface NodeOpts {
+  /**
+   * Root job queue name.
+   */
+  queueName: string;
+  /**
+   * Prefix included in job key.
+   */
+  prefix?: string;
+  /**
+   * Root job id.
+   */
+  id: string;
+  /**
+   * Maximum depth or levels to visit in the tree.
+   */
+  depth?: number;
+  /**
+   * Maximum quantity of children per type (processed, unprocessed).
+   */
+  maxChildren?: number;
+}
+```
+
+## JobNode Structure
+
+The method returns a `JobNode` structure:
+
+```typescript
+interface JobNode {
+  job: Job;
+  children?: JobNode[];
+}
+```
+
+## Limiting Results
+
+You may need to limit the information retrieved if you have many children for one of the job nodes:
+
+```typescript
+const limitedTree = await flow.getFlow({
+  id: topJob.id,
+  queueName: 'topQueueName',
+  depth: 1, // get only the first level of children
+  maxChildren: 2, // get only 2 children per node
+});
+
+const { children, job } = limitedTree;
+```
+
+### Parameters
+
+<ParamField path="depth" type="number" default="10">
+  Maximum depth or levels to visit in the tree. Controls how deep the hierarchy traversal goes.
+</ParamField>
+
+<ParamField path="maxChildren" type="number" default="20">
+  Maximum quantity of children per type (processed, unprocessed, failed, ignored) to retrieve for each node.
+</ParamField>
+
+<ParamField path="id" type="string" required>
+  The ID of the root job to start the tree traversal from.
+</ParamField>
+
+<ParamField path="queueName" type="string" required>
+  The queue name where the root job is located.
+</ParamField>
+
+<ParamField path="prefix" type="string" default="bull">
+  The prefix used for the job keys in Redis.
+</ParamField>
+
+## Example Use Cases
+
+<AccordionGroup>
+  <Accordion title="Monitoring Flow Progress">
+    Retrieve the entire flow tree to monitor the progress of a complex workflow:
+
+    ```typescript
+    const tree = await flow.getFlow({
+      id: rootJobId,
+      queueName: 'workflow',
+    });
+
+    function printTree(node: JobNode, level = 0) {
+      const indent = '  '.repeat(level);
+      console.log(`${indent}${node.job.name}: ${node.job.getState()}`);
+      
+      if (node.children) {
+        for (const child of node.children) {
+          printTree(child, level + 1);
+        }
+      }
+    }
+
+    printTree(tree);
+    ```
+  </Accordion>
+
+  <Accordion title="Debugging Failed Flows">
+    Get the complete flow tree to identify which jobs failed:
+
+    ```typescript
+    const tree = await flow.getFlow({
+      id: failedJobId,
+      queueName: 'processing',
+    });
+
+    async function findFailedJobs(node: JobNode): Promise<Job[]> {
+      const failed: Job[] = [];
+      const state = await node.job.getState();
+      
+      if (state === 'failed') {
+        failed.push(node.job);
+      }
+      
+      if (node.children) {
+        for (const child of node.children) {
+          const childFailed = await findFailedJobs(child);
+          failed.push(...childFailed);
+        }
+      }
+      
+      return failed;
+    }
+
+    const failedJobs = await findFailedJobs(tree);
+    ```
+  </Accordion>
+
+  <Accordion title="Paginating Large Trees">
+    Use depth and maxChildren to paginate through large job hierarchies:
+
+    ```typescript
+    // Get only the first level with 10 children
+    const firstLevel = await flow.getFlow({
+      id: rootJobId,
+      queueName: 'large-workflow',
+      depth: 1,
+      maxChildren: 10,
+    });
+
+    // Then get deeper levels for specific branches
+    if (firstLevel.children) {
+      for (const child of firstLevel.children) {
+        const subTree = await flow.getFlow({
+          id: child.job.id,
+          queueName: child.job.queueName,
+          depth: 2,
+          maxChildren: 10,
+        });
+      }
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Performance Considerations
+
+<Warning>
+  Retrieving large flow trees can be resource-intensive. Use the `depth` and `maxChildren` parameters to limit the amount of data retrieved.
+</Warning>
+
+<Tip>
+  For very large flows, consider implementing pagination by retrieving the tree in chunks using the `depth` parameter.
+</Tip>
+
+## API Reference
+
+- [Get Flow API Reference](https://api.docs.bullmq.io/classes/v5.FlowProducer.html#getflow)
+- [FlowProducer API Reference](https://api.docs.bullmq.io/classes/v5.FlowProducer.html)
+- [JobNode Interface](https://api.docs.bullmq.io/interfaces/v5.JobNode.html)

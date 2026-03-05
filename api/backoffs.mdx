@@ -1,0 +1,284 @@
+---
+title: 'Backoffs'
+description: 'Backoff strategies for job retries'
+---
+
+## Overview
+
+The Backoffs class provides built-in backoff strategies for job retries and utilities for normalizing backoff options.
+
+## Built-in Strategies
+
+### fixed
+
+Returns a fixed delay with optional jitter.
+
+```typescript
+Backoffs.builtinStrategies.fixed(delay: number, jitter?: number)
+```
+
+<ParamField path="delay" type="number" required>
+  The fixed delay in milliseconds
+</ParamField>
+
+<ParamField path="jitter" type="number" default="0">
+  Jitter factor (0-1) to randomize delay
+</ParamField>
+
+#### Example
+
+```typescript
+import { Queue } from 'bullmq';
+
+const queue = new Queue('myQueue', {
+  connection: { host: 'localhost', port: 6379 },
+});
+
+await queue.add(
+  'task',
+  { data: 'value' },
+  {
+    attempts: 3,
+    backoff: {
+      type: 'fixed',
+      delay: 5000,      // 5 seconds
+      jitter: 0.1,      // ±10% randomization
+    },
+  }
+);
+```
+
+### exponential
+
+Returns an exponentially increasing delay with optional jitter.
+
+```typescript
+Backoffs.builtinStrategies.exponential(delay: number, jitter?: number)
+```
+
+<ParamField path="delay" type="number" required>
+  The base delay in milliseconds
+</ParamField>
+
+<ParamField path="jitter" type="number" default="0">
+  Jitter factor (0-1) to randomize delay
+</ParamField>
+
+The delay formula is: `delay * 2^(attemptsMade - 1)`
+
+#### Example
+
+```typescript
+await queue.add(
+  'task',
+  { data: 'value' },
+  {
+    attempts: 5,
+    backoff: {
+      type: 'exponential',
+      delay: 1000,     // Base delay: 1 second
+      jitter: 0.2,     // ±20% randomization
+    },
+  }
+);
+
+// Retry delays (approximate):
+// Attempt 1: 1000ms (1 * 2^0)
+// Attempt 2: 2000ms (1 * 2^1)
+// Attempt 3: 4000ms (1 * 2^2)
+// Attempt 4: 8000ms (1 * 2^3)
+// Attempt 5: 16000ms (1 * 2^4)
+```
+
+## Static Methods
+
+### normalize
+
+Normalizes a backoff value to BackoffOptions.
+
+```typescript
+static normalize(
+  backoff: number | BackoffOptions
+): BackoffOptions | undefined
+```
+
+<ParamField path="backoff" type="number | BackoffOptions" required>
+  Backoff configuration (number for fixed delay or BackoffOptions object)
+</ParamField>
+
+```typescript
+// Number is normalized to fixed backoff
+const opts1 = Backoffs.normalize(5000);
+// { type: 'fixed', delay: 5000 }
+
+// BackoffOptions is returned as-is
+const opts2 = Backoffs.normalize({
+  type: 'exponential',
+  delay: 1000,
+});
+// { type: 'exponential', delay: 1000 }
+```
+
+### calculate
+
+Calculates the delay for a given attempt.
+
+```typescript
+static calculate(
+  backoff: BackoffOptions,
+  attemptsMade: number,
+  err: Error,
+  job: MinimalJob,
+  customStrategy?: BackoffStrategy
+): Promise<number> | number | undefined
+```
+
+<ParamField path="backoff" type="BackoffOptions" required>
+  Backoff configuration
+</ParamField>
+
+<ParamField path="attemptsMade" type="number" required>
+  Number of attempts already made
+</ParamField>
+
+<ParamField path="err" type="Error" required>
+  The error that caused the failure
+</ParamField>
+
+<ParamField path="job" type="MinimalJob" required>
+  The job being retried
+</ParamField>
+
+<ParamField path="customStrategy" type="BackoffStrategy">
+  Custom backoff strategy function
+</ParamField>
+
+## BackoffOptions
+
+```typescript
+interface BackoffOptions {
+  type: string;      // 'fixed', 'exponential', or custom type
+  delay?: number;    // Delay in milliseconds
+  jitter?: number;   // Jitter factor (0-1)
+}
+```
+
+## Custom Backoff Strategy
+
+You can implement a custom backoff strategy:
+
+```typescript
+import { Queue, Worker } from 'bullmq';
+
+// Define custom strategy
+const customBackoff = (
+  attemptsMade: number,
+  type: string,
+  err: Error,
+  job: any
+) => {
+  // Custom logic here
+  if (err.message.includes('rate-limit')) {
+    return 60000; // 1 minute for rate limit errors
+  }
+  return attemptsMade * 2000; // Linear backoff otherwise
+};
+
+// Register in worker settings
+const worker = new Worker(
+  'myQueue',
+  async (job) => {
+    // Process job
+  },
+  {
+    connection: { host: 'localhost', port: 6379 },
+    settings: {
+      backoffStrategy: customBackoff,
+    },
+  }
+);
+
+// Use in job options
+await queue.add(
+  'task',
+  { data: 'value' },
+  {
+    attempts: 5,
+    backoff: {
+      type: 'custom',  // Your custom type name
+    },
+  }
+);
+```
+
+## Jitter Calculation
+
+When jitter is specified, the actual delay is randomized:
+
+```typescript
+const minDelay = delay * (1 - jitter);
+const maxDelay = delay * (1 + jitter);
+const actualDelay = random(minDelay, maxDelay);
+```
+
+For example, with `delay: 1000` and `jitter: 0.2`:
+- Minimum delay: 800ms
+- Maximum delay: 1200ms
+
+## Examples
+
+### Simple Fixed Backoff
+
+```typescript
+await queue.add(
+  'email',
+  { to: 'user@example.com' },
+  {
+    attempts: 3,
+    backoff: 5000, // 5 seconds between retries
+  }
+);
+```
+
+### Exponential Backoff with Jitter
+
+```typescript
+await queue.add(
+  'api-call',
+  { endpoint: '/users' },
+  {
+    attempts: 5,
+    backoff: {
+      type: 'exponential',
+      delay: 2000,
+      jitter: 0.3, // ±30% randomization
+    },
+  }
+);
+```
+
+### Error-Specific Backoff
+
+```typescript
+const errorAwareBackoff = (
+  attemptsMade: number,
+  type: string,
+  err: Error
+) => {
+  if (err.name === 'NetworkError') {
+    return 30000; // 30 seconds for network errors
+  }
+  if (err.name === 'ValidationError') {
+    return -1; // Don't retry validation errors
+  }
+  // Default exponential backoff
+  return Math.pow(2, attemptsMade - 1) * 1000;
+};
+
+const worker = new Worker('myQueue', processor, {
+  connection: { host: 'localhost', port: 6379 },
+  settings: {
+    backoffStrategy: errorAwareBackoff,
+  },
+});
+```

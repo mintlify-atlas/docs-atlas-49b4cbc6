@@ -1,0 +1,337 @@
+---
+title: Going to Production
+description: Essential considerations and best practices for deploying BullMQ to production
+---
+
+This guide provides crucial considerations and tips to help you achieve a robust solution when deploying your BullMQ-based application to production.
+
+## Redis Configuration
+
+### Persistence
+
+Since BullMQ is based on Redis, persistence needs to be configured manually. Many hosting solutions do not offer persistence by default.
+
+<Steps>
+  <Step title="Enable AOF (Append Only File)">
+    We recommend enabling [AOF persistence](https://redis.io/docs/management/persistence/#aof-advantages), which provides a robust and fast solution.
+    
+    ```bash
+    # In redis.conf
+    appendonly yes
+    appendfsync everysec  # Write to disk every second
+    ```
+    
+    <Info>
+    Usually, 1 second per write is enough for most applications.
+    </Info>
+  </Step>
+  
+  <Step title="Benchmark performance impact">
+    Even though persistence is very fast, it will have some effect on performance. Make proper benchmarks to ensure it's acceptable for your use case.
+  </Step>
+</Steps>
+
+### Max Memory Policy
+
+<Warning>
+**Critical Configuration:** Configure `maxmemory-policy` to `noeviction`.
+
+This is the **only** setting that guarantees correct behavior of the queues. BullMQ cannot work properly if Redis evicts keys arbitrarily.
+</Warning>
+
+```bash
+# In redis.conf
+maxmemory-policy noeviction
+```
+
+Redis is often used as a cache, which means it removes keys according to some policy when memory is full. BullMQ requires that keys are never evicted arbitrarily.
+
+## Connection Management
+
+### Automatic Reconnections
+
+In production, automatic recovery after connection issues is crucial for system robustness.
+
+<Info>
+BullMQ uses [IORedis](https://www.npmjs.com/package/ioredis) for Redis connections. Understanding these options is important:
+- `retryStrategy`
+- `maxRetriesPerRequest`
+- `enableOfflineQueue`
+</Info>
+
+#### Different Behavior for Queue vs Worker
+
+- **Queue operations**: Should [fail quickly](/patterns/failing-fast-when-redis-is-down) during temporal disconnections
+- **Worker operations**: Should wait indefinitely without raising exceptions
+
+### retryStrategy
+
+Determines how connection retries are performed. BullMQ uses this default strategy:
+
+```typescript
+const connection = {
+  host: 'localhost',
+  port: 6379,
+  retryStrategy: (times: number) => {
+    return Math.max(Math.min(Math.exp(times), 20000), 1000);
+  },
+};
+```
+
+This provides:
+- Exponential backoff
+- Minimum 1-second retry time
+- Maximum 20-second retry time
+
+### maxRetriesPerRequest
+
+<Warning>
+For Workers, set `maxRetriesPerRequest` to `null`.
+
+Otherwise, exceptions raised by Redis could break worker functionality. BullMQ will output a warning if this is misconfigured.
+</Warning>
+
+```typescript
+import { Worker } from 'bullmq';
+
+const worker = new Worker(
+  'myqueue',
+  async (job) => {
+    // Process job
+  },
+  {
+    connection: {
+      host: 'localhost',
+      port: 6379,
+      maxRetriesPerRequest: null, // Required for workers
+    },
+  }
+);
+```
+
+### enableOfflineQueue
+
+- **For Queue instances**: Disable the offline queue to fail quickly
+- **For Worker instances**: Leave enabled to wait until connection is re-established
+
+```typescript
+// Queue - fail fast
+const queue = new Queue('myqueue', {
+  connection: {
+    host: 'localhost',
+    port: 6379,
+    enableOfflineQueue: false,
+  },
+});
+
+// Worker - wait for reconnection
+const worker = new Worker('myqueue', processor, {
+  connection: {
+    host: 'localhost',
+    port: 6379,
+    enableOfflineQueue: true, // Default
+  },
+});
+```
+
+## Error Handling
+
+### Log Errors
+
+Attach error handlers to prevent unhandled errors and aid debugging:
+
+```typescript
+worker.on('error', (err) => {
+  console.error('Worker error:', err);
+  // Log to your error tracking service
+});
+
+queue.on('error', (err) => {
+  console.error('Queue error:', err);
+  // Log to your error tracking service
+});
+```
+
+### Unhandled Exceptions and Rejections
+
+Handle unhandled exceptions gracefully at the application level:
+
+```typescript
+process.on('uncaughtException', (err) => {
+  logger.error(err, 'Uncaught exception');
+  // Handle the error safely
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  logger.error({ promise, reason }, 'Unhandled Rejection at: Promise');
+  // Handle the error safely
+});
+```
+
+## Graceful Shutdown
+
+### Why It Matters
+
+Workers may be processing jobs when servers restart. Proper shutdown minimizes the risk of stalled jobs.
+
+<Info>
+If a worker is killed without waiting for jobs to complete, those jobs will be marked as stalled and automatically reprocessed after about 30 seconds when new workers come online.
+</Info>
+
+### Listen for Shutdown Signals
+
+<Steps>
+  <Step title="Listen for SIGINT and SIGTERM">
+    - `SIGINT`: Sent when user types Ctrl+C
+    - `SIGTERM`: Sent by system daemons, Kubernetes, PM2, etc.
+    
+    ```typescript
+    const gracefulShutdown = async (signal: string) => {
+      console.log(`Received ${signal}, closing server...`);
+      
+      await worker.close();
+      // Close other resources
+      
+      process.exit(0);
+    };
+    
+    process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+    process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+    ```
+  </Step>
+  
+  <Step title="Handle timeout scenarios">
+    <Warning>
+    The code above doesn't guarantee jobs will never be stalled, as jobs may take longer than the grace period for server restart.
+    </Warning>
+    
+    Consider implementing timeouts:
+    
+    ```typescript
+    const gracefulShutdown = async (signal: string) => {
+      console.log(`Received ${signal}, closing server...`);
+      
+      const timeout = setTimeout(() => {
+        console.error('Forced shutdown due to timeout');
+        process.exit(1);
+      }, 30000); // 30 second timeout
+      
+      await worker.close();
+      clearTimeout(timeout);
+      
+      process.exit(0);
+    };
+    ```
+  </Step>
+</Steps>
+
+## Job Management
+
+### Auto-job Removal
+
+By default, all jobs are kept forever. Configure automatic removal:
+
+```typescript
+const queue = new Queue('myqueue', {
+  defaultJobOptions: {
+    removeOnComplete: 100,  // Keep last 100 completed jobs
+    removeOnFail: 1000,     // Keep last 1000 failed jobs
+  },
+});
+```
+
+<Info>
+You can also configure removal per job:
+
+```typescript
+await queue.add('task', data, {
+  removeOnComplete: true,  // Remove immediately
+  removeOnFail: false,     // Keep failed jobs
+});
+```
+</Info>
+
+Learn more about [auto-removal of jobs](https://docs.bullmq.io/guide/queues/auto-removal-of-jobs).
+
+### Protecting Sensitive Data
+
+<Warning>
+**Security Best Practice:** Job data is stored in clear text in Redis.
+
+- **Best option**: Avoid storing sensitive data in jobs altogether
+- **Alternative**: Encrypt sensitive data before adding it to the queue
+
+Do not take security lightly - the risks of data loss and economic damage are serious.
+</Warning>
+
+```typescript
+import { encrypt, decrypt } from './encryption';
+
+// Encrypt before adding to queue
+const sensitiveData = {
+  userId: '123',
+  creditCard: '1234-5678-9012-3456',
+};
+
+const encryptedData = encrypt(JSON.stringify(sensitiveData));
+
+await queue.add('process-payment', {
+  encryptedPayload: encryptedData,
+});
+
+// Decrypt in worker
+const worker = new Worker('process-payment', async (job) => {
+  const decryptedData = JSON.parse(decrypt(job.data.encryptedPayload));
+  // Process payment
+});
+```
+
+## Production Checklist
+
+<AccordionGroup>
+  <Accordion title="Redis Configuration">
+    - [ ] AOF persistence enabled
+    - [ ] `maxmemory-policy` set to `noeviction`
+    - [ ] Proper memory allocation configured
+    - [ ] Redis version 6.2.0 or newer
+  </Accordion>
+  
+  <Accordion title="Connection Management">
+    - [ ] Retry strategy configured
+    - [ ] `maxRetriesPerRequest` set to `null` for workers
+    - [ ] Error handlers attached to queues and workers
+    - [ ] Offline queue settings appropriate for use case
+  </Accordion>
+  
+  <Accordion title="Shutdown Handling">
+    - [ ] SIGINT handler implemented
+    - [ ] SIGTERM handler implemented
+    - [ ] Graceful shutdown tested
+    - [ ] Timeout handling for long-running jobs
+  </Accordion>
+  
+  <Accordion title="Job Management">
+    - [ ] Auto-removal configured
+    - [ ] Sensitive data encrypted or excluded
+    - [ ] Job retry logic configured
+    - [ ] Monitoring and alerting set up
+  </Accordion>
+  
+  <Accordion title="Error Handling">
+    - [ ] Unhandled exception handler
+    - [ ] Unhandled rejection handler
+    - [ ] Error logging configured
+    - [ ] Error tracking service integrated
+  </Accordion>
+</AccordionGroup>
+
+## Related Resources
+
+<CardGroup cols={2}>
+  <Card title="Troubleshooting" icon="wrench" href="/operations/troubleshooting">
+    Common issues and solutions
+  </Card>
+  <Card title="Redis Hosting" icon="server" href="/redis/hosting-aws-memorydb">
+    Managed Redis hosting options
+  </Card>
+</CardGroup>

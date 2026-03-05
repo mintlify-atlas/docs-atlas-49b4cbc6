@@ -1,0 +1,374 @@
+---
+title: "Retrying Jobs"
+description: "Manually retry completed or failed jobs"
+---
+
+## Overview
+
+BullMQ provides a `retry` method that allows you to programmatically retry jobs that have already completed or failed. This is different from the automatic retry mechanism (configured via the `attempts` option) - the `retry` method lets you manually move a job back to the waiting queue at any time.
+
+<Info>
+Only jobs in the `completed` or `failed` state can be retried. Active, waiting, or delayed jobs cannot be retried.
+</Info>
+
+## When to Use Job.retry()
+
+The `retry` method is useful in scenarios such as:
+
+- **Manual intervention**: When a job failed due to a temporary external issue that has been resolved
+- **Re-processing completed jobs**: When you need to run a completed job again with the same data
+- **Workflow recovery**: When recovering from system failures or bugs that caused jobs to fail incorrectly
+
+## Basic Usage
+
+<CodeGroup>
+
+```typescript TypeScript
+import { Queue, Job } from 'bullmq';
+
+const queue = new Queue('my-queue');
+
+// Get a failed job by ID
+const job = await Job.fromId(queue, 'job-id');
+
+// Retry a failed job (default state is 'failed')
+await job.retry();
+
+// Retry a completed job
+await job.retry('completed');
+```
+
+```python Python
+from bullmq import Queue, Job
+
+queue = Queue('my-queue')
+
+# Get a failed job by ID
+job = await Job.fromId(queue, 'job-id')
+
+# Retry a failed job (default state is 'failed')
+await job.retry()
+
+# Retry a completed job
+await job.retry('completed')
+
+await queue.close()
+```
+
+</CodeGroup>
+
+From `src/classes/job.ts:1475`:
+
+```typescript
+/**
+ * Attempts to retry the job. Only a job that has failed or completed can be retried.
+ *
+ * @param state - completed / failed
+ * @param opts - options to retry a job
+ * @returns A promise that resolves when the job has been successfully moved to the wait queue.
+ * The queue emits a waiting event when the job is successfully moved.
+ * @throws Will throw an error if the job does not exist, is locked, or is not in the expected state.
+ */
+async retry(
+  state: FinishedStatus = 'failed',
+  opts: RetryOptions = {},
+): Promise<void> {
+  await this.scripts.reprocessJob(this, state, opts);
+  this.failedReason = null;
+  this.finishedOn = null;
+  this.processedOn = null;
+  this.returnvalue = null;
+
+  if (opts.resetAttemptsMade) {
+    this.attemptsMade = 0;
+  }
+
+  if (opts.resetAttemptsStarted) {
+    this.attemptsStarted = 0;
+  }
+}
+```
+
+## Retry Options
+
+The `retry` method accepts options to reset attempt counters, allowing the retried job to behave as if it's being processed for the first time.
+
+### Reset Attempts Made
+
+The `attemptsMade` counter tracks how many times a job has been processed. Resetting it allows the job to use its full retry allowance again.
+
+<CodeGroup>
+
+```typescript TypeScript
+// Retry and reset the attempts counter
+await job.retry('failed', { resetAttemptsMade: true });
+```
+
+```python Python
+# Retry and reset the attempts counter
+await job.retry('failed', {"resetAttemptsMade": True})
+```
+
+</CodeGroup>
+
+From `src/classes/job.ts:115`:
+
+```typescript
+export class Job {
+  /**
+   * Number of attempts after the job has failed.
+   * @defaultValue 0
+   */
+  attemptsMade = 0;
+}
+```
+
+### Reset Attempts Started
+
+The `attemptsStarted` counter tracks how many times a job has been moved to the active state:
+
+<CodeGroup>
+
+```typescript TypeScript
+// Retry and reset both counters
+await job.retry('failed', { 
+  resetAttemptsMade: true,
+  resetAttemptsStarted: true 
+});
+```
+
+```python Python
+# Retry and reset both counters
+await job.retry('failed', {
+    "resetAttemptsMade": True,
+    "resetAttemptsStarted": True
+})
+```
+
+</CodeGroup>
+
+From `src/classes/job.ts:107`:
+
+```typescript
+export class Job {
+  /**
+   * Number of attempts when job is moved to active.
+   * @defaultValue 0
+   */
+  attemptsStarted = 0;
+}
+```
+
+## What Happens When You Retry
+
+When a job is retried, the following occurs:
+
+1. **Job is moved to waiting queue**: The job is removed from the completed/failed set and added back to the waiting queue
+2. **Properties are cleared**: The following job properties are reset to `null`:
+   - `failedReason`
+   - `finishedOn`
+   - `processedOn`
+   - `returnvalue`
+3. **Events are emitted**: A `waiting` event is emitted when the job is successfully moved
+4. **Parent dependencies restored**: If the job is a child in a flow, its dependency relationship with the parent is restored
+
+<Warning>
+If you retry a job without resetting `attemptsMade`, and the job has already exhausted its retry attempts, it will fail immediately when processed again.
+</Warning>
+
+## Error Handling
+
+The `retry` method can fail in the following cases:
+
+| Error Code | Description |
+|------------|-------------|
+| `-1` | Job does not exist |
+| `-3` | Job was not found in the expected state |
+
+<CodeGroup>
+
+```typescript TypeScript
+try {
+  await job.retry('failed');
+} catch (error) {
+  console.error('Failed to retry job:', error.message);
+}
+```
+
+```python Python
+try:
+    await job.retry('failed')
+except Exception as error:
+    print(f'Failed to retry job: {error}')
+```
+
+</CodeGroup>
+
+## Automatic Retries vs Manual Retries
+
+<CardGroup cols={2}>
+
+<Card title="Automatic Retries" icon="rotate">
+  Configured via `attempts` option
+  
+  ```typescript
+  await queue.add(
+    'job',
+    { data: 'test' },
+    {
+      attempts: 3,
+      backoff: {
+        type: 'exponential',
+        delay: 1000,
+      },
+    }
+  );
+  ```
+  
+  Jobs automatically retry when they fail, up to the specified number of attempts.
+</Card>
+
+<Card title="Manual Retries" icon="hand">
+  Using `job.retry()` method
+  
+  ```typescript
+  const job = await Job.fromId(queue, 'job-id');
+  await job.retry('failed', {
+    resetAttemptsMade: true
+  });
+  ```
+  
+  Manually retry a completed or failed job at any time, with full control over reset options.
+</Card>
+
+</CardGroup>
+
+## Common Use Cases
+
+<AccordionGroup>
+
+<Accordion title="Retry After External Service Recovery">
+  When an external API or service is temporarily down:
+  
+  ```typescript
+  const failedJobs = await queue.getFailed();
+  
+  for (const job of failedJobs) {
+    if (job.failedReason.includes('Service Unavailable')) {
+      // Reset attempts to give it a fresh start
+      await job.retry('failed', { resetAttemptsMade: true });
+    }
+  }
+  ```
+</Accordion>
+
+<Accordion title="Re-process with Updated Code">
+  After deploying a bug fix:
+  
+  ```typescript
+  // Get all failed jobs from the last hour
+  const failedJobs = await queue.getFailed(0, 1000);
+  const oneHourAgo = Date.now() - 3600000;
+  
+  for (const job of failedJobs) {
+    if (job.finishedOn > oneHourAgo) {
+      await job.retry('failed', {
+        resetAttemptsMade: true,
+        resetAttemptsStarted: true,
+      });
+    }
+  }
+  ```
+</Accordion>
+
+<Accordion title="Rerun Completed Jobs">
+  Process a completed job again (e.g., regenerate report):
+  
+  ```typescript
+  const job = await Job.fromId(queue, 'report-123');
+  
+  if (await job.isCompleted()) {
+    // Rerun the job with the same data
+    await job.retry('completed', {
+      resetAttemptsMade: true,
+      resetAttemptsStarted: true,
+    });
+  }
+  ```
+</Accordion>
+
+</AccordionGroup>
+
+## Retry with Flows
+
+When retrying a child job in a flow, the parent-child relationship is restored:
+
+```typescript
+import { FlowProducer, Queue } from 'bullmq';
+
+const flowProducer = new FlowProducer();
+const parentQueue = new Queue('parent');
+const childQueue = new Queue('child');
+
+// Create a flow
+const flow = await flowProducer.add({
+  name: 'parent-job',
+  queueName: 'parent',
+  data: {},
+  children: [
+    {
+      name: 'child-job',
+      queueName: 'child',
+      data: {},
+    },
+  ],
+});
+
+// If child fails and is retried
+const childJob = await Job.fromId(childQueue, flow.children[0].job.id);
+await childJob.retry('failed');
+
+// The parent will wait for the child to complete again
+```
+
+## Job Attempt Counters
+
+From `src/classes/job.ts:107-116`:
+
+```typescript
+export class Job {
+  /**
+   * Number of attempts when job is moved to active.
+   * @defaultValue 0
+   */
+  attemptsStarted = 0;
+
+  /**
+   * Number of attempts after the job has failed.
+   * @defaultValue 0
+   */
+  attemptsMade = 0;
+}
+```
+
+## Read More
+
+<CardGroup cols={2}>
+
+<Card title="Retry API Reference" icon="code" href="https://api.docs.bullmq.io/classes/v5.Job.html#retry">
+  View the complete Retry API documentation
+</Card>
+
+<Card title="Automatic Retries" icon="rotate" href="/retrying-failing-jobs">
+  Learn about automatic retry configuration with backoff strategies
+</Card>
+
+<Card title="Stop Retrying Jobs" icon="stop" href="/patterns/stop-retrying-jobs">
+  How to prevent further retries using UnrecoverableError
+</Card>
+
+<Card title="Job States" icon="circle-dot" href="/jobs/getters">
+  Understanding job states and lifecycle
+</Card>
+
+</CardGroup>

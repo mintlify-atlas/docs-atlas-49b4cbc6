@@ -1,0 +1,97 @@
+---
+title: PHP
+description: BullMQ PHP client for adding jobs to queues
+---
+
+The BullMQ PHP package provides a **Queue client** that allows you to add jobs to BullMQ queues from your PHP applications. These jobs can then be processed by workers written in Node.js, Python, or Elixir.
+
+## Overview
+
+BullMQ PHP is designed as a producer-only client, focusing on adding jobs to queues efficiently and reliably.
+
+<Info>
+  The PHP package only implements the Queue class (producer side). Workers are not included as PHP's execution model is not well-suited for long-running worker processes. Use Node.js, Python, or Elixir workers to process the jobs.
+</Info>
+
+## Key Features
+
+- **Add jobs to queues** - Single and bulk job operations
+- **Job scheduling** - Support for delayed jobs
+- **Priority queues** - Process important jobs first
+- **Job retry** - Configurable retry strategies with backoff
+- **Queue management** - Pause, resume, clean, and drain queues
+- **Job introspection** - Get job states and queue statistics
+- **Parent-child jobs** - Support for job flows and dependencies
+- **Interoperability** - Full compatibility with BullMQ workers in Node.js, Python, and Elixir
+
+## Requirements
+
+- PHP 8.1 or higher
+- Redis 5.0 or higher (6.2+ recommended)
+- Composer
+
+## Use Cases
+
+PHP BullMQ is ideal for:
+
+- Adding background jobs from PHP web applications
+- Integrating PHP systems with BullMQ-based job processing infrastructure
+- Building hybrid systems where jobs are created in PHP and processed in Node.js, Python, or Elixir
+- Scheduling tasks from PHP applications
+
+## Version
+
+Current version: **1.0.1**
+
+## Architecture
+
+The PHP client communicates with Redis using the same Lua scripts as other BullMQ implementations, ensuring full compatibility. Jobs added via PHP are indistinguishable from jobs added via other languages.
+
+## Supported Operations
+
+### Queue Operations
+- Add single and bulk jobs
+- Get job information and state
+- Pause and resume queues
+- Clean old jobs
+- Drain and obliterate queues
+- Retry and promote jobs
+- Get job counts and statistics
+
+### Job Options
+- Custom job IDs
+- Delays and scheduling
+- Priority
+- Retry attempts and backoff
+- Removal policies (removeOnComplete, removeOnFail)
+- LIFO ordering
+- Parent-child relationships
+
+## Interoperability
+
+Jobs added with the PHP client are fully compatible with BullMQ workers in:
+
+- **Node.js** - Using the official [BullMQ](https://www.npmjs.com/package/bullmq) package
+- **Python** - Using the [BullMQ Python](https://pypi.org/project/bullmq/) package  
+- **Elixir** - Using the [BullMQ Elixir](https://hex.pm/packages/bullmq) package
+
+<Warning>
+  **Note on Job Schedulers**: Repeatable/scheduled jobs (cron patterns) should be created from the Node.js side using `JobScheduler`. The PHP client is designed for adding individual jobs, not managing schedulers.
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/php/installation">
+    Install BullMQ PHP using Composer
+  </Card>
+  <Card title="Usage Guide" icon="code" href="/php/usage">
+    Learn how to add jobs and manage queues
+  </Card>
+  <Card title="Changelog" icon="clock-rotate-left" href="/php/changelog">
+    View release history and updates
+  </Card>
+  <Card title="GitHub" icon="github" href="https://github.com/taskforcesh/bullmq/tree/master/php">
+    View the source code and examples
+  </Card>
+</CardGroup>

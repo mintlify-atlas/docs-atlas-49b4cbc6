@@ -1,122 +1,261 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mint Starter Kit",
+  "name": "BullMQ",
+  "theme": "aspen",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#7c7c7c",
+    "light": "#1e1e1e",
+    "dark": "#ededed"
   },
-  "favicon": "/favicon.svg",
+  "favicon": "https://media.brand.dev/59919d50-86ac-4ee7-9a04-d0eca85f87f3.png",
+  "logo": {
+    "light": "https://media.brand.dev/359bd703-a027-4f00-a651-8bb22d10654a.png",
+    "dark": "https://media.brand.dev/359bd703-a027-4f00-a651-8bb22d10654a.png"
+  },
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/taskforcesh/bullmq"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/taskforcesh/bullmq",
+      "x": "https://x.com/bullmqhq"
+    }
+  },
   "navigation": {
     "tabs": [
       {
-        "tab": "Guides",
+        "tab": "Documentation",
         "groups": [
           {
-            "group": "Getting started",
+            "group": "Getting Started",
             "pages": [
-              "index",
-              "quickstart",
-              "development"
+              "introduction",
+              "quick-start",
+              "installation",
+              "architecture"
             ]
           },
           {
-            "group": "Customization",
+            "group": "Core Concepts",
             "pages": [
-              "essentials/settings",
-              "essentials/navigation"
+              "concepts/connections",
+              "concepts/queues",
+              "concepts/workers",
+              "concepts/jobs",
+              "concepts/events"
             ]
           },
           {
-            "group": "Writing content",
+            "group": "Queue Management",
             "pages": [
-              "essentials/markdown",
-              "essentials/code",
-              "essentials/images",
-              "essentials/reusable-snippets"
+              "queues/adding-jobs",
+              "queues/adding-jobs-bulk",
+              "queues/auto-removal",
+              "queues/removing-jobs",
+              "queues/global-concurrency",
+              "queues/global-rate-limit",
+              "queues/metadata"
             ]
           },
           {
-            "group": "AI tools",
+            "group": "Workers",
             "pages": [
-              "ai-tools/cursor",
-              "ai-tools/claude-code",
-              "ai-tools/windsurf"
+              "workers/overview",
+              "workers/concurrency",
+              "workers/graceful-shutdown",
+              "workers/sandboxed-processors",
+              "workers/pausing-queues",
+              "workers/stalled-jobs",
+              "workers/cancelling-jobs",
+              "workers/auto-removal"
+            ]
+          },
+          {
+            "group": "Job Types & Features",
+            "pages": [
+              "jobs/fifo-lifo",
+              "jobs/job-ids",
+              "jobs/job-data",
+              "jobs/delayed",
+              "jobs/repeatable",
+              "jobs/prioritized",
+              "jobs/deduplication",
+              "jobs/getters",
+              "jobs/removing",
+              "jobs/retrying",
+              "jobs/stalled"
+            ]
+          },
+          {
+            "group": "Job Schedulers",
+            "pages": [
+              "schedulers/overview",
+              "schedulers/repeat-strategies",
+              "schedulers/repeat-options",
+              "schedulers/management"
+            ]
+          },
+          {
+            "group": "Flows",
+            "pages": [
+              "flows/overview",
+              "flows/adding-flows-bulk",
+              "flows/get-flow-tree",
+              "flows/parent-child-dependencies",
+              "flows/fail-parent",
+              "flows/continue-parent",
+              "flows/remove-dependency",
+              "flows/ignore-dependency"
+            ]
+          },
+          {
+            "group": "Advanced Features",
+            "pages": [
+              "advanced/rate-limiting",
+              "advanced/parallelism-concurrency",
+              "advanced/retrying-failing-jobs",
+              "advanced/returning-job-data",
+              "advanced/metrics",
+              "advanced/telemetry"
+            ]
+          },
+          {
+            "group": "Patterns & Best Practices",
+            "pages": [
+              "patterns/named-processor",
+              "patterns/idempotent-jobs",
+              "patterns/throttle-jobs",
+              "patterns/timeout-jobs",
+              "patterns/manual-retrying",
+              "patterns/process-step-jobs",
+              "patterns/stop-retrying-jobs",
+              "patterns/manually-processing-jobs",
+              "patterns/redis-cluster",
+              "patterns/failing-fast-redis-down"
+            ]
+          },
+          {
+            "group": "Redis Integration",
+            "pages": [
+              "redis/compatibility",
+              "redis/dragonfly",
+              "redis/hosting-aws-memorydb",
+              "redis/hosting-aws-elasticache"
+            ]
+          },
+          {
+            "group": "Framework Integration",
+            "pages": [
+              "integrations/nestjs",
+              "integrations/nestjs-producers",
+              "integrations/nestjs-queue-events"
+            ]
+          },
+          {
+            "group": "Production & Operations",
+            "pages": [
+              "operations/going-to-production",
+              "operations/troubleshooting"
+            ]
+          },
+          {
+            "group": "Migration Guides",
+            "pages": [
+              "migrations/overview",
+              "migrations/bull-to-bullmq",
+              "migrations/newer-versions"
             ]
           }
         ]
       },
       {
-        "tab": "API reference",
+        "tab": "Multi-Language Support",
         "groups": [
           {
-            "group": "API documentation",
+            "group": "Python",
             "pages": [
-              "api-reference/introduction"
+              "python/introduction",
+              "python/installation",
+              "python/usage",
+              "python/changelog"
             ]
           },
           {
-            "group": "Endpoint examples",
+            "group": "Elixir",
             "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete",
-              "api-reference/endpoint/webhook"
+              "elixir/introduction",
+              "elixir/installation",
+              "elixir/usage",
+              "elixir/changelog"
+            ]
+          },
+          {
+            "group": "PHP",
+            "pages": [
+              "php/introduction",
+              "php/installation",
+              "php/usage",
+              "php/changelog"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Core Classes",
+            "pages": [
+              "api/queue",
+              "api/worker",
+              "api/job",
+              "api/flow-producer",
+              "api/queue-events",
+              "api/job-scheduler"
+            ]
+          },
+          {
+            "group": "Specialized Classes",
+            "pages": [
+              "api/queue-getters",
+              "api/redis-connection",
+              "api/repeat",
+              "api/backoffs"
+            ]
+          },
+          {
+            "group": "Interfaces",
+            "pages": [
+              "api/interfaces/queue-options",
+              "api/interfaces/worker-options",
+              "api/interfaces/job-options",
+              "api/interfaces/connection-options",
+              "api/interfaces/flow-job",
+              "api/interfaces/repeatable-options"
+            ]
+          },
+          {
+            "group": "Types & Enums",
+            "pages": [
+              "api/types/processor",
+              "api/types/job-progress",
+              "api/enums/error-code"
+            ]
+          },
+          {
+            "group": "Error Handling",
+            "pages": [
+              "api/errors/unrecoverable-error",
+              "api/errors/delayed-error",
+              "api/errors/rate-limit-error",
+              "api/errors/waiting-children-error"
             ]
           }
         ]
       }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
-  "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://dashboard.mintlify.com"
-    }
-  },
-  "contextual": {
-    "options": [
-     "copy",
-     "view",
-     "chatgpt",
-     "claude",
-     "perplexity",
-     "mcp",
-     "cursor",
-     "vscode"
-   ]
-  },
-  "footer": {
-    "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
-    }
+    ]
   }
 }

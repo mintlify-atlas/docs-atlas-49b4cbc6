@@ -1,0 +1,296 @@
+---
+title: 'Adding Jobs'
+description: 'Learn how to add jobs to a BullMQ queue with various options'
+---
+
+The most important method of the Queue class is `add`, which allows you to add jobs to the queue in different ways.
+
+## Basic Usage
+
+Adding a job is straightforward:
+
+<CodeGroup>
+```typescript TypeScript
+import { Queue } from 'bullmq';
+
+const queue = new Queue('paint');
+
+await queue.add('paint-job', { color: 'red' });
+```
+
+```javascript JavaScript
+const { Queue } = require('bullmq');
+
+const queue = new Queue('paint');
+
+await queue.add('paint-job', { color: 'red' });
+```
+</CodeGroup>
+
+The job will now be stored in Redis, waiting for a worker to pick it up and process it. Workers may not be running when you add the job, but as soon as one worker is connected to the queue, it will pick up the job and process it.
+
+## Method Signature
+
+```typescript
+async add(
+  name: string,
+  data: T,
+  opts?: JobsOptions
+): Promise<Job>
+```
+
+<ParamField path="name" type="string" required>
+  Name of the job to be added to the queue
+</ParamField>
+
+<ParamField path="data" type="T">
+  Arbitrary data to append to the job. This will be available in the worker's processor function.
+</ParamField>
+
+<ParamField path="opts" type="JobsOptions">
+  Job options that affect how the job is processed. See below for available options.
+</ParamField>
+
+## Job Options
+
+### Timing Options
+
+<ParamField path="opts.delay" type="number" default="0">
+  An amount of milliseconds to wait until this job can be processed. The job will be in the "delayed" state until the delay expires.
+  
+  ```typescript
+  await queue.add('paint', { color: 'blue' }, { delay: 5000 });
+  ```
+</ParamField>
+
+<ParamField path="opts.timestamp" type="number" default="Date.now()">
+  Timestamp when the job was created
+</ParamField>
+
+### Priority
+
+<ParamField path="opts.priority" type="number" default="0">
+  Ranges from 0 (highest priority) to 2,097,152 (lowest priority). Note that using priorities has a slight impact on performance, so only use it if required.
+  
+  ```typescript
+  await queue.add('urgent', { task: 'critical' }, { priority: 1 });
+  ```
+</ParamField>
+
+### Retry Options
+
+<ParamField path="opts.attempts" type="number" default="1">
+  The total number of attempts to try the job until it completes
+  
+  ```typescript
+  await queue.add('flaky-task', { data: 'test' }, { attempts: 3 });
+  ```
+</ParamField>
+
+<ParamField path="opts.backoff" type="number | BackoffOptions">
+  Backoff setting for automatic retries if the job fails. Can be a number (milliseconds) or an object with type and delay.
+  
+  ```typescript
+  // Simple backoff (fixed delay)
+  await queue.add('task', { data: 'test' }, { 
+    attempts: 3,
+    backoff: 5000 // 5 seconds between retries
+  });
+  
+  // Exponential backoff
+  await queue.add('task', { data: 'test' }, {
+    attempts: 5,
+    backoff: {
+      type: 'exponential',
+      delay: 1000
+    }
+  });
+  ```
+</ParamField>
+
+### Auto-Removal Options
+
+<ParamField path="opts.removeOnComplete" type="boolean | number | KeepJobs">
+  If true, removes the job when it successfully completes. When given a number, it specifies the maximum amount of jobs to keep. You can also provide an object specifying max age and/or count to keep.
+  
+  ```typescript
+  // Remove immediately after completion
+  await queue.add('temp-job', { data: 'test' }, { removeOnComplete: true });
+  
+  // Keep last 1000 completed jobs
+  await queue.add('job', { data: 'test' }, { removeOnComplete: 1000 });
+  
+  // Keep jobs up to 1 hour old, max 1000 jobs
+  await queue.add('job', { data: 'test' }, {
+    removeOnComplete: {
+      age: 3600, // seconds
+      count: 1000
+    }
+  });
+  ```
+</ParamField>
+
+<ParamField path="opts.removeOnFail" type="boolean | number | KeepJobs">
+  If true, removes the job when it fails after all attempts. When given a number, it specifies the maximum amount of jobs to keep. You can also provide an object specifying max age and/or count to keep.
+  
+  ```typescript
+  // Keep last 5000 failed jobs for debugging
+  await queue.add('risky-job', { data: 'test' }, { 
+    removeOnComplete: 1000,
+    removeOnFail: 5000 
+  });
+  ```
+</ParamField>
+
+### Job Identification
+
+<ParamField path="opts.jobId" type="string">
+  Override the job ID. By default, the job ID is a unique integer, but you can use this setting to override it. If you use this option, it is up to you to ensure the jobId is unique. If you attempt to add a job with an ID that already exists, it will not be added (a 'duplicated' event will be emitted instead).
+  
+  ```typescript
+  await queue.add('idempotent-job', { userId: 123 }, { 
+    jobId: 'user-123-sync'
+  });
+  ```
+  
+  <Warning>JobId cannot be '0' or start with '0:'</Warning>
+</ParamField>
+
+### Processing Options
+
+<ParamField path="opts.lifo" type="boolean" default="false">
+  If true, adds the job to the right of the queue instead of the left, making it a LIFO (Last In First Out) queue.
+  
+  ```typescript
+  await queue.add('stack-task', { data: 'test' }, { lifo: true });
+  ```
+</ParamField>
+
+### Logging Options
+
+<ParamField path="opts.keepLogs" type="number">
+  Maximum amount of log entries that will be preserved for this job
+</ParamField>
+
+<ParamField path="opts.stackTraceLimit" type="number">
+  Limits the amount of stack trace lines that will be recorded in the stacktrace when the job fails
+</ParamField>
+
+### Size Limits
+
+<ParamField path="opts.sizeLimit" type="number">
+  Limits the size in bytes of the job's data payload (as a JSON serialized string)
+</ParamField>
+
+### Parent-Child Jobs
+
+<ParamField path="opts.parent" type="ParentOptions">
+  Parent options for creating parent-child job relationships. Allows you to create flows where child jobs must complete before the parent job can proceed.
+  
+  ```typescript
+  await queue.add('child-job', { data: 'test' }, {
+    parent: {
+      id: 'parent-job-id',
+      queue: 'parent-queue'
+    }
+  });
+  ```
+</ParamField>
+
+### Repeatable Jobs
+
+<ParamField path="opts.repeat" type="RepeatOptions">
+  Repeat this job based on a cron schedule or interval.
+  
+  ```typescript
+  // Cron-based repeat
+  await queue.add('daily-report', { date: new Date() }, {
+    repeat: {
+      pattern: '0 9 * * *' // Every day at 9 AM
+    }
+  });
+  
+  // Interval-based repeat
+  await queue.add('health-check', {}, {
+    repeat: {
+      every: 60000 // Every minute
+    }
+  });
+  ```
+</ParamField>
+
+## Complete Example
+
+<CodeGroup>
+```typescript TypeScript
+import { Queue } from 'bullmq';
+
+const queue = new Queue('notifications');
+
+// Add a job with multiple options
+const job = await queue.add(
+  'send-email',
+  {
+    to: 'user@example.com',
+    subject: 'Welcome!',
+    body: 'Thanks for signing up'
+  },
+  {
+    attempts: 3,
+    backoff: {
+      type: 'exponential',
+      delay: 1000
+    },
+    removeOnComplete: {
+      age: 3600,
+      count: 1000
+    },
+    removeOnFail: {
+      age: 86400
+    },
+    priority: 2
+  }
+);
+
+console.log(`Job added with ID: ${job.id}`);
+```
+
+```javascript JavaScript
+const { Queue } = require('bullmq');
+
+const queue = new Queue('notifications');
+
+// Add a job with multiple options
+const job = await queue.add(
+  'send-email',
+  {
+    to: 'user@example.com',
+    subject: 'Welcome!',
+    body: 'Thanks for signing up'
+  },
+  {
+    attempts: 3,
+    backoff: {
+      type: 'exponential',
+      delay: 1000
+    },
+    removeOnComplete: {
+      age: 3600,
+      count: 1000
+    },
+    removeOnFail: {
+      age: 86400
+    },
+    priority: 2
+  }
+);
+
+console.log(`Job added with ID: ${job.id}`);
+```
+</CodeGroup>
+
+## Related
+
+- [Adding Jobs in Bulk](/queues/adding-jobs-bulk)
+- [Auto Removal](/queues/auto-removal)
+- [Queue API Reference](https://api.docs.bullmq.io/classes/v5.Queue.html#add)

@@ -1,0 +1,165 @@
+---
+title: "Failing Fast When Redis is Down"
+description: "Configure BullMQ to fail immediately when Redis is unavailable instead of queuing commands"
+---
+
+By design, BullMQ reconnects to Redis automatically. If jobs are added to a queue while the queue instance is disconnected from Redis, the `add` command will not fail; instead, the call will keep waiting for a reconnection to occur until it can complete.
+
+## The Problem
+
+This behavior is not always desirable. For example, if you have implemented a REST API that results in a call to `add`, you do not want to keep the HTTP call busy while `add` is waiting for the queue to reconnect to Redis.
+
+## The Solution
+
+You can pass the option `enableOfflineQueue: false`, so that `ioredis` does not queue the commands and instead throws an exception:
+
+```typescript
+const myQueue = new Queue("transcoding", {
+  connection: {
+    enableOfflineQueue: false,
+  },
+});
+
+app.post("/jobs", async (req, res) => {
+  try {
+    const job = await myQueue.add("myjob", { req.body });
+    res.status(201).json(job.id);
+  } catch(err){
+    res.status(503).send(err);
+  }
+})
+```
+
+Using this approach, the caller can catch the exception and act upon it depending on its requirements (for example, retrying the call or giving up).
+
+## Use Cases
+
+<CardGroup cols={2}>
+  <Card title="REST APIs" icon="server">
+    Avoid keeping HTTP requests hanging during Redis downtime
+  </Card>
+  <Card title="Microservices" icon="cubes">
+    Fail fast and let service mesh handle retries
+  </Card>
+  <Card title="Critical Operations" icon="triangle-exclamation">
+    Know immediately if job submission fails
+  </Card>
+  <Card title="Health Checks" icon="heart-pulse">
+    Detect Redis connectivity issues quickly
+  </Card>
+</CardGroup>
+
+## Complete Example
+
+```typescript
+import { Queue } from 'bullmq';
+import express from 'express';
+
+const app = express();
+app.use(express.json());
+
+const queue = new Queue('api-requests', {
+  connection: {
+    host: 'localhost',
+    port: 6379,
+    enableOfflineQueue: false, // Fail fast
+    maxRetriesPerRequest: 3,   // Retry a few times
+    retryStrategy: (times) => {
+      // Exponential backoff: 100ms, 200ms, 400ms
+      return Math.min(times * 100, 1000);
+    },
+  },
+});
+
+app.post('/api/process', async (req, res) => {
+  try {
+    const job = await queue.add('process-request', req.body);
+    
+    res.status(202).json({
+      message: 'Job queued successfully',
+      jobId: job.id,
+    });
+  } catch (error) {
+    console.error('Failed to queue job:', error);
+    
+    res.status(503).json({
+      error: 'Service temporarily unavailable',
+      message: 'Unable to queue job. Please try again later.',
+    });
+  }
+});
+
+app.listen(3000, () => {
+  console.log('Server listening on port 3000');
+});
+```
+
+## Monitoring Connection Status
+
+You can also listen to connection events to monitor Redis availability:
+
+```typescript
+const queue = new Queue('myqueue', {
+  connection: {
+    enableOfflineQueue: false,
+  },
+});
+
+queue.on('error', (error) => {
+  console.error('Queue error:', error);
+});
+
+// Access the underlying Redis connection
+const connection = await queue.client;
+
+connection.on('connect', () => {
+  console.log('Connected to Redis');
+});
+
+connection.on('error', (error) => {
+  console.error('Redis connection error:', error);
+});
+
+connection.on('close', () => {
+  console.warn('Redis connection closed');
+});
+```
+
+<Warning>
+Currently, there is a limitation in that the Redis instance must at least be online while the queue is being instantiated.
+</Warning>
+
+## Retry Strategy
+
+Combine `enableOfflineQueue: false` with a retry strategy for best results:
+
+```typescript
+const queue = new Queue('myqueue', {
+  connection: {
+    enableOfflineQueue: false,
+    maxRetriesPerRequest: 3,
+    retryStrategy: (times) => {
+      if (times > 3) {
+        // Stop retrying after 3 attempts
+        return null;
+      }
+      // Exponential backoff
+      return Math.min(times * 50, 2000);
+    },
+  },
+});
+```
+
+## Related Resources
+
+<CardGroup cols={2}>
+  <Card title="Connections" icon="link" href="/concepts/connections">
+    Learn about Redis connection configuration
+  </Card>
+  <Card title="Going to Production" icon="rocket" href="/operations/going-to-production">
+    Production deployment best practices
+  </Card>
+  <Card title="Troubleshooting" icon="wrench" href="/operations/troubleshooting">
+    Common connection issues and solutions
+  </Card>
+</CardGroup>

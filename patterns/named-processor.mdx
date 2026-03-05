@@ -1,0 +1,50 @@
+---
+title: "Named Processor"
+description: "Handle multiple job types in a single worker using switch statements"
+---
+
+When a Worker is instantiated, the most common usage is to specify a process function. Sometimes however, it is useful to be able to specify more than one function to process a job for a specific condition.
+
+## Using Switch Statements
+
+You can use a simple switch case to differentiate your logic based on the job name:
+
+```typescript
+const worker = new Worker(
+  'queueName',
+  async job => {
+    switch (job.name) {
+      case 'taskType1': {
+        await doSomeLogic1();
+        break;
+      }
+      case 'taskType2': {
+        await doSomeLogic2();
+        break;
+      }
+    }
+  },
+  { connection },
+);
+```
+
+<Warning>
+This was a feature in the Bull package, but it creates a lot of confusion, so in order to provide an alternative, you can use this pattern. See [#297](https://github.com/taskforcesh/bullmq/issues/297) and [#69](https://github.com/taskforcesh/bullmq/issues/69) as reference.
+</Warning>
+
+## Benefits of This Pattern
+
+- **Single Worker Instance**: Manage multiple job types without creating separate workers
+- **Shared Resources**: All job types can share connections, configuration, and state
+- **Simple Logic**: Easy to understand and maintain
+
+## Related Resources
+
+<CardGroup cols={2}>
+  <Card title="Workers" icon="microchip" href="/workers/overview">
+    Learn about worker creation and configuration
+  </Card>
+  <Card title="Job Types" icon="list" href="/jobs/job-data">
+    Understand job data and naming
+  </Card>
+</CardGroup>

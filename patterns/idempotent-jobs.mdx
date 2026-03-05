@@ -1,0 +1,94 @@
+---
+title: "Idempotent Jobs"
+description: "Design jobs that can be safely retried without side effects"
+---
+
+In order to take advantage of [the ability to retry failed jobs](/advanced/retrying-failing-jobs), your jobs should be designed with failure in mind.
+
+## What is Idempotence?
+
+Idempotence means that it should not make a difference to the final state of the system if a job successfully completes on its first attempt, or if it fails initially and succeeds when retried.
+
+## Design Principles
+
+To achieve idempotent behavior, your jobs should be:
+
+<Steps>
+  <Step title="Atomic">
+    Jobs should be as atomic as possible, performing a single clear action
+  </Step>
+  <Step title="Simple">
+    Avoid performing many different actions (database updates, API calls, etc.) at once
+  </Step>
+  <Step title="Trackable">
+    Make it easy to track the process flow and rollback partial progress when an exception occurs
+  </Step>
+</Steps>
+
+## Benefits
+
+<CardGroup cols={2}>
+  <Card title="Easier Debugging" icon="bug">
+    Simpler jobs mean simpler debugging and troubleshooting
+  </Card>
+  <Card title="Better Performance" icon="gauge">
+    Easier to identify and optimize bottlenecks
+  </Card>
+  <Card title="Reliable Retries" icon="rotate-right">
+    Jobs can be safely retried without causing duplicate side effects
+  </Card>
+  <Card title="Better Monitoring" icon="chart-line">
+    Clearer metrics and observability
+  </Card>
+</CardGroup>
+
+## Complex Workflows
+
+If necessary, split complex jobs using the [flow pattern](/flows/overview) to create parent-child job dependencies.
+
+## Examples of Idempotent Operations
+
+```typescript
+// ✅ Good: Idempotent update
+await db.users.update(
+  { id: userId },
+  { status: 'active', updatedAt: new Date() }
+);
+
+// ✅ Good: Idempotent API call with idempotency key
+await stripe.charges.create({
+  amount: 1000,
+  currency: 'usd',
+  source: 'tok_visa',
+  idempotency_key: jobId, // Use job ID as idempotency key
+});
+```
+
+## Examples of Non-Idempotent Operations
+
+```typescript
+// ❌ Bad: Non-idempotent increment
+await db.users.update(
+  { id: userId },
+  { $inc: { loginCount: 1 } }
+);
+// If retried, this will increment multiple times!
+
+// ❌ Bad: Appending to array without checking
+await db.users.update(
+  { id: userId },
+  { $push: { notifications: notification } }
+);
+// If retried, this will add duplicate notifications!
+```
+
+## Related Resources
+
+<CardGroup cols={2}>
+  <Card title="Retrying Failed Jobs" icon="rotate-right" href="/advanced/retrying-failing-jobs">
+    Learn about retry strategies and backoff
+  </Card>
+  <Card title="Flows" icon="diagram-project" href="/flows/overview">
+    Split complex work into smaller jobs
+  </Card>
+</CardGroup>

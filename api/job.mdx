@@ -1,0 +1,444 @@
+---
+title: 'Job'
+description: 'Represents a job in the queue with data, options, and state'
+---
+
+## Overview
+
+The Job class represents a job in the queue. Jobs are normally created implicitly when you add a job to the queue with `Queue.add()`, but a Job instance is also passed to the Worker's process function.
+
+## Constructor
+
+```typescript
+new Job(
+  queue: MinimalQueue,
+  name: string,
+  data: any,
+  opts?: JobsOptions,
+  id?: string
+)
+```
+
+<Note>
+  Jobs are typically created using `Queue.add()` rather than instantiating directly.
+</Note>
+
+## Properties
+
+### id
+
+```typescript
+id?: string
+```
+
+The unique identifier of the job.
+
+### name
+
+```typescript
+name: string
+```
+
+The name of the job.
+
+### data
+
+```typescript
+data: any
+```
+
+The payload data for this job.
+
+### opts
+
+```typescript
+opts: JobsOptions
+```
+
+The options object for this job.
+
+### progress
+
+```typescript
+progress: number | object = 0
+```
+
+The progress a job has performed so far.
+
+### returnvalue
+
+```typescript
+returnvalue: any = null
+```
+
+The value returned by the processor when processing this job.
+
+### stacktrace
+
+```typescript
+stacktrace: string[] = null
+```
+
+Stacktrace for the error (for failed jobs).
+
+### timestamp
+
+```typescript
+timestamp: number
+```
+
+Timestamp when the job was created.
+
+### attemptsMade
+
+```typescript
+attemptsMade: number = 0
+```
+
+Number of attempts after the job has failed.
+
+### attemptsStarted
+
+```typescript
+attemptsStarted: number = 0
+```
+
+Number of times job has been moved to active state.
+
+### delay
+
+```typescript
+delay: number = 0
+```
+
+An amount of milliseconds to wait until this job can be processed.
+
+### priority
+
+```typescript
+priority: number = 0
+```
+
+Ranges from 0 (highest priority) to 2,097,152 (lowest priority).
+
+### processedOn
+
+```typescript
+processedOn?: number
+```
+
+Timestamp for when the job was processed.
+
+### finishedOn
+
+```typescript
+finishedOn?: number
+```
+
+Timestamp for when the job finished (completed or failed).
+
+### failedReason
+
+```typescript
+failedReason: string
+```
+
+Reason for failing.
+
+## Static Methods
+
+### create
+
+Creates a new job and adds it to the queue.
+
+```typescript
+static create<T, R, N>(
+  queue: MinimalQueue,
+  name: N,
+  data: T,
+  opts?: JobsOptions
+): Promise<Job<T, R, N>>
+```
+
+### createBulk
+
+Creates a bulk of jobs and adds them atomically to the queue.
+
+```typescript
+static createBulk<T, R, N>(
+  queue: MinimalQueue,
+  jobs: Array<{ name: N; data: T; opts?: JobsOptions }>
+): Promise<Job<T, R, N>[]>
+```
+
+### fromId
+
+Fetches a Job from the queue by ID.
+
+```typescript
+static fromId<T, R, N>(
+  queue: MinimalQueue,
+  jobId: string
+): Promise<Job<T, R, N> | undefined>
+```
+
+## Methods
+
+### updateProgress
+
+Updates a job's progress.
+
+```typescript
+updateProgress(progress: number | object): Promise<void>
+```
+
+<ParamField path="progress" type="number | object" required>
+  Number or object to be saved as progress
+</ParamField>
+
+### updateData
+
+Updates a job's data.
+
+```typescript
+updateData(data: any): Promise<void>
+```
+
+<ParamField path="data" type="any" required>
+  The data that will replace the current job's data
+</ParamField>
+
+### log
+
+Logs one row of log data.
+
+```typescript
+log(logRow: string): Promise<number>
+```
+
+<ParamField path="logRow" type="string" required>
+  String with log data to be logged
+</ParamField>
+
+<ResponseField name="count" type="number">
+  The total number of log entries for this job
+</ResponseField>
+
+### remove
+
+Completely removes the job from the queue.
+
+```typescript
+remove(opts?: { removeChildren?: boolean }): Promise<void>
+```
+
+<ParamField path="opts.removeChildren" type="boolean" default="true">
+  Whether to remove child jobs
+</ParamField>
+
+### retry
+
+Attempts to retry the job.
+
+```typescript
+retry(state?: 'completed' | 'failed', opts?: RetryOptions): Promise<void>
+```
+
+<ParamField path="state" type="string" default="'failed'">
+  The state from which to retry (completed or failed)
+</ParamField>
+
+<ParamField path="opts" type="RetryOptions">
+  Retry options
+</ParamField>
+
+### promote
+
+Promotes a delayed job so that it starts to be processed as soon as possible.
+
+```typescript
+promote(): Promise<void>
+```
+
+### changeDelay
+
+Changes the delay of a delayed job.
+
+```typescript
+changeDelay(delay: number): Promise<void>
+```
+
+<ParamField path="delay" type="number" required>
+  Milliseconds from now when the job should be processed
+</ParamField>
+
+### changePriority
+
+Changes the priority of a job.
+
+```typescript
+changePriority(opts: { priority?: number; lifo?: boolean }): Promise<void>
+```
+
+<ParamField path="opts.priority" type="number">
+  New priority value
+</ParamField>
+
+<ParamField path="opts.lifo" type="boolean">
+  Whether to add to the left (LIFO) or right (FIFO)
+</ParamField>
+
+### getState
+
+Gets the current state of the job.
+
+```typescript
+getState(): Promise<JobState | 'unknown'>
+```
+
+<ResponseField name="state" type="string">
+  One of: 'completed', 'failed', 'delayed', 'active', 'waiting', 'waiting-children', 'unknown'
+</ResponseField>
+
+### isCompleted
+
+Checks if the job has completed.
+
+```typescript
+isCompleted(): Promise<boolean>
+```
+
+### isFailed
+
+Checks if the job has failed.
+
+```typescript
+isFailed(): Promise<boolean>
+```
+
+### isDelayed
+
+Checks if the job is delayed.
+
+```typescript
+isDelayed(): Promise<boolean>
+```
+
+### isActive
+
+Checks if the job is active.
+
+```typescript
+isActive(): Promise<boolean>
+```
+
+### isWaiting
+
+Checks if the job is waiting.
+
+```typescript
+isWaiting(): Promise<boolean>
+```
+
+### isWaitingChildren
+
+Checks if the job is waiting for children.
+
+```typescript
+isWaitingChildren(): Promise<boolean>
+```
+
+### getChildrenValues
+
+Gets the result values of child jobs.
+
+```typescript
+getChildrenValues<T>(): Promise<{ [jobKey: string]: T }>
+```
+
+### getDependencies
+
+Gets children job keys if this job is a parent.
+
+```typescript
+getDependencies(opts?: DependenciesOpts): Promise<{
+  processed?: Record<string, any>;
+  unprocessed?: string[];
+  failed?: string[];
+  ignored?: Record<string, any>;
+}>
+```
+
+### getDependenciesCount
+
+Gets children job counts if this job is a parent.
+
+```typescript
+getDependenciesCount(opts?: {
+  processed?: boolean;
+  unprocessed?: boolean;
+  failed?: boolean;
+  ignored?: boolean;
+}): Promise<{
+  processed?: number;
+  unprocessed?: number;
+  failed?: number;
+  ignored?: number;
+}>
+```
+
+### waitUntilFinished
+
+Returns a promise that resolves when the job has completed or rejects when failed.
+
+```typescript
+waitUntilFinished(queueEvents: QueueEvents, ttl?: number): Promise<any>
+```
+
+<ParamField path="queueEvents" type="QueueEvents" required>
+  Instance of QueueEvents to listen for completion
+</ParamField>
+
+<ParamField path="ttl" type="number">
+  Time in milliseconds to wait before timing out
+</ParamField>
+
+### moveToCompleted
+
+Moves a job to the completed state.
+
+```typescript
+moveToCompleted(
+  returnValue: any,
+  token: string,
+  fetchNext?: boolean
+): Promise<void | any[]>
+```
+
+### moveToFailed
+
+Moves a job to the failed state.
+
+```typescript
+moveToFailed(
+  err: Error,
+  token: string,
+  fetchNext?: boolean
+): Promise<void | any[]>
+```
+
+### extendLock
+
+Extends the lock for this job.
+
+```typescript
+extendLock(token: string, duration: number): Promise<number>
+```
+
+<ParamField path="token" type="string" required>
+  Unique token for the lock
+</ParamField>
+
+<ParamField path="duration" type="number" required>
+  Lock duration in milliseconds
+</ParamField>

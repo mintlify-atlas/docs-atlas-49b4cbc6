@@ -1,0 +1,339 @@
+---
+title: "Removing Jobs"
+description: "Remove jobs from the queue manually or automatically"
+---
+
+## Overview
+
+Sometimes it's necessary to remove a job from the queue, such as when a job contains bad data or is no longer needed.
+
+<CodeGroup>
+
+```typescript TypeScript
+import { Queue } from 'bullmq';
+
+const queue = new Queue('paint');
+
+const job = await queue.add('wall', { color: 1 });
+
+await job.remove();
+```
+
+```python Python
+from bullmq import Queue
+
+queue = Queue('paint')
+
+job = await queue.add('wall', {'color': 1})
+
+await job.remove()
+```
+
+</CodeGroup>
+
+<Warning>
+Locked jobs (in active state) cannot be removed. An error will be thrown if you attempt to remove a locked job.
+</Warning>
+
+From `src/classes/job.ts:668`:
+
+```typescript
+/**
+ * Completely remove the job from the queue.
+ * Note, this call will throw an exception if the job
+ * is being processed when the call is performed.
+ *
+ * @param opts - Options to remove a job
+ */
+async remove({ removeChildren = true } = {}): Promise<void> {
+  await this.queue.waitUntilReady();
+
+  const queue = this.queue;
+  const job = this;
+
+  const removed = await this.scripts.remove(job.id, removeChildren);
+  if (removed) {
+    queue.emit('removed', job);
+  } else {
+    throw new Error(
+      `Job ${this.id} could not be removed because it is locked by another worker`,
+    );
+  }
+}
+```
+
+## Automatic Removal
+
+You can configure jobs to be automatically removed when they complete or fail:
+
+### Remove on Complete
+
+```typescript
+import { Queue } from 'bullmq';
+
+const queue = new Queue('Paint');
+
+// Remove immediately after completion
+await queue.add('wall', { color: 'pink' }, { removeOnComplete: true });
+
+// Keep only the last 100 completed jobs
+await queue.add('wall', { color: 'blue' }, { removeOnComplete: 100 });
+
+// Keep jobs for 24 hours or max 1000 jobs
+await queue.add(
+  'wall',
+  { color: 'green' },
+  {
+    removeOnComplete: {
+      age: 24 * 3600, // seconds
+      count: 1000,
+    },
+  },
+);
+```
+
+### Remove on Fail
+
+```typescript
+// Remove immediately after failure
+await queue.add('wall', { color: 'pink' }, { removeOnFail: true });
+
+// Keep only the last 50 failed jobs
+await queue.add('wall', { color: 'blue' }, { removeOnFail: 50 });
+
+// Keep failed jobs for 7 days or max 500 jobs
+await queue.add(
+  'wall',
+  { color: 'green' },
+  {
+    removeOnFail: {
+      age: 7 * 24 * 3600, // seconds
+      count: 500,
+    },
+  },
+);
+```
+
+From `src/interfaces/base-job-options.ts:46`:
+
+```typescript
+interface DefaultJobOptions {
+  /**
+   * If true, removes the job when it successfully completes
+   * When given a number, it specifies the maximum amount of
+   * jobs to keep, or you can provide an object specifying max
+   * age and/or count to keep. It overrides whatever setting is used in the worker.
+   * Default behavior is to keep the job in the completed set.
+   */
+  removeOnComplete?: boolean | number | KeepJobs;
+
+  /**
+   * If true, removes the job when it fails after all attempts.
+   * When given a number, it specifies the maximum amount of
+   * jobs to keep, or you can provide an object specifying max
+   * age and/or count to keep. It overrides whatever setting is used in the worker.
+   * Default behavior is to keep the job in the failed set.
+   */
+  removeOnFail?: boolean | number | KeepJobs;
+}
+```
+
+## Removing Jobs with Parent
+
+When removing a job that has a parent job in a flow:
+
+### Child Job Removal
+
+There are two possible cases:
+
+1. **No pending dependencies**: The parent is moved to wait status and may be processed
+2. **Pending dependencies remain**: The parent stays in waiting-children status
+
+<Info>
+If the child is in **completed** state when removed, processed values will be kept in the parent's processed `hset`.
+</Info>
+
+### Parent Job Removal
+
+When removing a parent job with pending dependencies:
+
+```typescript
+// Remove job and all its children
+await parentJob.remove({ removeChildren: true });
+
+// Remove only the parent (children remain)
+await parentJob.remove({ removeChildren: false });
+```
+
+From `src/classes/job.ts:692`:
+
+```typescript
+/**
+ * Remove all children from this job that are not yet processed,
+ * in other words that are in any other state than completed, failed or active.
+ *
+ * @remarks
+ *  - Jobs with locks (most likely active) are ignored.
+ *  - This method can be slow if the number of children is large (> 1000).
+ */
+async removeUnprocessedChildren(): Promise<void> {
+  const jobId = this.id;
+  await this.scripts.removeUnprocessedChildren(jobId);
+}
+```
+
+<Warning>
+If any child job is locked (active), the deletion process will be stopped.
+</Warning>
+
+## Remove Child Dependency
+
+Remove a child dependency relationship while the child is still unfinished:
+
+```typescript
+import { Job, Queue } from 'bullmq';
+
+const queue = new Queue('myQueue');
+const job = await Job.fromId(queue, 'child-job-id');
+
+const wasRemoved = await job.removeChildDependency();
+
+if (wasRemoved) {
+  console.log('Child dependency removed successfully');
+}
+```
+
+From `src/classes/job.ts:631`:
+
+```typescript
+/**
+ * Removes child dependency from parent when child is not yet finished
+ *
+ * @returns True if the relationship existed and if it was removed.
+ */
+async removeChildDependency(): Promise<boolean> {
+  const childDependencyIsRemoved = await this.scripts.removeChildDependency(
+    this.id,
+    this.parentKey,
+  );
+  if (childDependencyIsRemoved) {
+    this.parent = undefined;
+    this.parentKey = undefined;
+    return true;
+  }
+
+  return false;
+}
+```
+
+## Bulk Removal
+
+Remove multiple jobs at once:
+
+```typescript
+import { Queue } from 'bullmq';
+
+const queue = new Queue('Paint');
+
+// Remove all failed jobs
+const failedJobs = await queue.getFailed();
+for (const job of failedJobs) {
+  await job.remove();
+}
+
+// Or use queue methods
+await queue.clean(0, 100, 'failed'); // Remove up to 100 failed jobs
+await queue.clean(24 * 3600 * 1000, 0, 'completed'); // Remove completed jobs older than 24 hours
+```
+
+## Remove Events
+
+Listen for removal events:
+
+```typescript
+import { Queue } from 'bullmq';
+
+const queue = new Queue('Paint');
+
+queue.on('removed', (job) => {
+  console.log(`Job ${job.id} was removed`);
+});
+```
+
+## Best Practices
+
+<AccordionGroup>
+
+<Accordion title="Set Retention Policies">
+  Use `removeOnComplete` and `removeOnFail` to manage queue size:
+  
+  ```typescript
+  const queue = new Queue('Paint', {
+    defaultJobOptions: {
+      removeOnComplete: {
+        age: 24 * 3600, // Keep for 24 hours
+        count: 1000,     // Keep max 1000 jobs
+      },
+      removeOnFail: {
+        age: 7 * 24 * 3600, // Keep for 7 days
+      },
+    },
+  });
+  ```
+</Accordion>
+
+<Accordion title="Clean Regularly">
+  Set up periodic cleaning:
+  
+  ```typescript
+  // Clean old jobs every hour
+  setInterval(async () => {
+    await queue.clean(24 * 3600 * 1000, 1000, 'completed');
+    await queue.clean(7 * 24 * 3600 * 1000, 1000, 'failed');
+  }, 60 * 60 * 1000);
+  ```
+</Accordion>
+
+<Accordion title="Handle Removal Errors">
+  Gracefully handle locked job errors:
+  
+  ```typescript
+  try {
+    await job.remove();
+  } catch (error) {
+    if (error.message.includes('locked')) {
+      console.log('Job is currently being processed, cannot remove');
+    } else {
+      throw error;
+    }
+  }
+  ```
+</Accordion>
+
+</AccordionGroup>
+
+## When to Remove Jobs
+
+<CardGroup cols={2}>
+
+<Card title="Bad Data" icon="circle-xmark">
+  Remove jobs with invalid or corrupted data that cannot be processed
+</Card>
+
+<Card title="Cancelled Operations" icon="ban">
+  Remove jobs when the user cancels the requested operation
+</Card>
+
+<Card title="Duplicate Jobs" icon="clone">
+  Remove older duplicate jobs when newer versions exist
+</Card>
+
+<Card title="Expired Jobs" icon="clock">
+  Remove jobs that are no longer relevant due to time constraints
+</Card>
+
+</CardGroup>
+
+<Card title="API Reference" icon="code" href="https://api.docs.bullmq.io/classes/v5.Job.html#remove">
+  View the Remove API Reference
+</Card>

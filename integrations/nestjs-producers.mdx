@@ -1,0 +1,353 @@
+---
+title: NestJS Producers
+description: Add jobs to BullMQ queues in NestJS applications
+---
+
+Job producers add jobs to queues in NestJS. Producers are typically application services (Nest providers) that inject queues to add jobs.
+
+## Basic Producer
+
+<Steps>
+  <Step title="Inject the queue into your service">
+    Use the `@InjectQueue()` decorator to inject a queue by name:
+    
+    ```typescript
+    import { Injectable } from '@nestjs/common';
+    import { InjectQueue } from '@nestjs/bullmq';
+    import { Queue } from 'bullmq';
+    
+    @Injectable()
+    export class AudioService {
+      constructor(@InjectQueue('audio') private audioQueue: Queue) {}
+    }
+    ```
+    
+    <Info>
+    The `@InjectQueue()` decorator identifies the queue by its name, as provided in `registerQueue()`.
+    </Info>
+  </Step>
+  
+  <Step title="Add jobs to the queue">
+    Call the queue's `add()` method to add jobs:
+    
+    ```typescript
+    async convertAudio(file: string, format: string) {
+      const job = await this.audioQueue.add('convert', {
+        file,
+        format,
+      });
+      
+      return job.id;
+    }
+    ```
+  </Step>
+</Steps>
+
+## Complete Producer Example
+
+```typescript audio.service.ts
+import { Injectable } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
+
+@Injectable()
+export class AudioService {
+  constructor(@InjectQueue('audio') private audioQueue: Queue) {}
+  
+  async convertAudio(file: string, format: string) {
+    const job = await this.audioQueue.add('convert', {
+      file,
+      format,
+    });
+    
+    return {
+      jobId: job.id,
+      status: 'queued',
+    };
+  }
+  
+  async convertWithOptions(file: string, format: string) {
+    const job = await this.audioQueue.add(
+      'convert',
+      {
+        file,
+        format,
+      },
+      {
+        // Job options
+        priority: 1,
+        delay: 5000, // Delay 5 seconds
+        attempts: 3,
+        backoff: {
+          type: 'exponential',
+          delay: 1000,
+        },
+      }
+    );
+    
+    return job.id;
+  }
+  
+  async getJobStatus(jobId: string) {
+    const job = await this.audioQueue.getJob(jobId);
+    
+    if (!job) {
+      return null;
+    }
+    
+    return {
+      id: job.id,
+      state: await job.getState(),
+      progress: job.progress,
+      data: job.data,
+    };
+  }
+}
+```
+
+## Job Options
+
+Customize job behavior with various options:
+
+<Tabs>
+  <Tab title="Priority">
+    ```typescript
+    await this.audioQueue.add('convert', data, {
+      priority: 1, // Lower number = higher priority
+    });
+    ```
+  </Tab>
+  
+  <Tab title="Delay">
+    ```typescript
+    await this.audioQueue.add('convert', data, {
+      delay: 5000, // Delay 5 seconds
+    });
+    ```
+  </Tab>
+  
+  <Tab title="Attempts & Backoff">
+    ```typescript
+    await this.audioQueue.add('convert', data, {
+      attempts: 3,
+      backoff: {
+        type: 'exponential',
+        delay: 1000,
+      },
+    });
+    ```
+  </Tab>
+  
+  <Tab title="Remove on Complete">
+    ```typescript
+    await this.audioQueue.add('convert', data, {
+      removeOnComplete: true,
+      removeOnFail: 100, // Keep last 100 failed jobs
+    });
+    ```
+  </Tab>
+</Tabs>
+
+## Flow Producers
+
+For complex workflows with parent-child job relationships, use FlowProducer:
+
+<Steps>
+  <Step title="Register the FlowProducer">
+    ```typescript
+    import { Module } from '@nestjs/common';
+    import { BullModule } from '@nestjs/bullmq';
+    
+    @Module({
+      imports: [
+        BullModule.registerFlowProducer({
+          name: 'videoflow',
+        }),
+      ],
+    })
+    export class VideoModule {}
+    ```
+  </Step>
+  
+  <Step title="Inject the FlowProducer">
+    ```typescript
+    import { Injectable } from '@nestjs/common';
+    import { InjectFlowProducer } from '@nestjs/bullmq';
+    import { FlowProducer } from 'bullmq';
+    
+    @Injectable()
+    export class VideoService {
+      constructor(
+        @InjectFlowProducer('videoflow') private flowProducer: FlowProducer,
+      ) {}
+    }
+    ```
+    
+    <Info>
+    The `@InjectFlowProducer()` decorator identifies the flow producer by its name, as provided in `registerFlowProducer()`.
+    </Info>
+  </Step>
+  
+  <Step title="Create a flow">
+    ```typescript
+    async processVideo(videoId: string) {
+      const flow = await this.flowProducer.add({
+        name: 'process-video',
+        queueName: 'video',
+        data: { videoId },
+        children: [
+          {
+            name: 'extract-audio',
+            data: { videoId },
+            queueName: 'audio',
+          },
+          {
+            name: 'generate-thumbnail',
+            data: { videoId },
+            queueName: 'image',
+          },
+          {
+            name: 'transcode',
+            data: { videoId, format: 'mp4' },
+            queueName: 'video',
+          },
+        ],
+      });
+      
+      return flow;
+    }
+    ```
+  </Step>
+</Steps>
+
+## Bulk Job Operations
+
+Add multiple jobs efficiently:
+
+```typescript
+import { Injectable } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
+
+@Injectable()
+export class BatchService {
+  constructor(@InjectQueue('batch') private batchQueue: Queue) {}
+  
+  async processBatch(items: any[]) {
+    const jobs = items.map((item, index) => ({
+      name: 'process',
+      data: item,
+      opts: {
+        jobId: `batch-${Date.now()}-${index}`,
+      },
+    }));
+    
+    const results = await this.batchQueue.addBulk(jobs);
+    
+    return {
+      total: results.length,
+      jobIds: results.map(job => job.id),
+    };
+  }
+}
+```
+
+## Controller Example
+
+Integrate producers with NestJS controllers:
+
+```typescript audio.controller.ts
+import { Controller, Post, Body, Get, Param } from '@nestjs/common';
+import { AudioService } from './audio.service';
+
+@Controller('audio')
+export class AudioController {
+  constructor(private readonly audioService: AudioService) {}
+  
+  @Post('convert')
+  async convert(
+    @Body() body: { file: string; format: string }
+  ) {
+    const jobId = await this.audioService.convertAudio(
+      body.file,
+      body.format
+    );
+    
+    return {
+      message: 'Job queued successfully',
+      jobId,
+    };
+  }
+  
+  @Get('status/:jobId')
+  async getStatus(@Param('jobId') jobId: string) {
+    const status = await this.audioService.getJobStatus(jobId);
+    
+    if (!status) {
+      return { error: 'Job not found' };
+    }
+    
+    return status;
+  }
+}
+```
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Job IDs" icon="fingerprint">
+    Use custom job IDs for deduplication:
+    ```typescript
+    await queue.add('task', data, {
+      jobId: `unique-${userId}`,
+    });
+    ```
+  </Card>
+  
+  <Card title="Error Handling" icon="triangle-exclamation">
+    Always handle errors when adding jobs:
+    ```typescript
+    try {
+      await queue.add('task', data);
+    } catch (error) {
+      // Handle error
+    }
+    ```
+  </Card>
+  
+  <Card title="Job Options" icon="sliders">
+    Set appropriate timeouts and attempts:
+    ```typescript
+    await queue.add('task', data, {
+      attempts: 3,
+      backoff: 1000,
+    });
+    ```
+  </Card>
+  
+  <Card title="Auto-removal" icon="trash">
+    Clean up completed jobs automatically:
+    ```typescript
+    await queue.add('task', data, {
+      removeOnComplete: true,
+    });
+    ```
+  </Card>
+</CardGroup>
+
+## Related Resources
+
+<CardGroup cols={2}>
+  <Card title="NestJS Integration" icon="nest" href="/integrations/nestjs">
+    Learn about NestJS integration basics
+  </Card>
+  <Card title="Queue Events" icon="bell" href="/integrations/nestjs-queue-events">
+    Listen to queue events in NestJS
+  </Card>
+</CardGroup>
+
+## External Documentation
+
+<Card title="NestJS Queues Documentation" icon="book" href="https://docs.nestjs.com/techniques/queues">
+  Official NestJS documentation for queue integration
+</Card>

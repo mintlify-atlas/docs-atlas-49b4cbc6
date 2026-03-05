@@ -1,0 +1,256 @@
+---
+title: 'DelayedError'
+description: 'Error to move a job back to delayed state from active state'
+---
+
+## Overview
+
+Throw DelayedError from a job processor to move the job back to the delayed state, scheduling it for future processing.
+
+## Class
+
+```typescript
+class DelayedError extends Error {
+  constructor(message?: string);
+}
+```
+
+## Usage
+
+```typescript
+import { Worker, DelayedError } from 'bullmq';
+
+const worker = new Worker('myQueue', async (job) => {
+  // Check if conditions are met to process
+  const ready = await checkIfReady(job.data);
+  
+  if (!ready) {
+    // Move back to delayed state
+    throw new DelayedError('Conditions not met, delaying job');
+  }
+  
+  // Process the job
+  return await processJob(job.data);
+});
+```
+
+## Examples
+
+### Waiting for Dependencies
+
+```typescript
+const processor = async (job) => {
+  // Check if required data is available
+  const data = await getData(job.data.dataId);
+  
+  if (!data) {
+    // Data not ready yet, delay and try again later
+    throw new DelayedError(
+      `Data ${job.data.dataId} not available yet`
+    );
+  }
+  
+  return await processData(data);
+};
+```
+
+### Time-Based Conditions
+
+```typescript
+const processor = async (job) => {
+  const { scheduledTime } = job.data;
+  
+  if (Date.now() < scheduledTime) {
+    // Too early to process
+    throw new DelayedError(
+      `Job scheduled for ${new Date(scheduledTime).toISOString()}`
+    );
+  }
+  
+  return await executeScheduledTask(job.data);
+};
+```
+
+### Resource Availability
+
+```typescript
+const processor = async (job) => {
+  const resource = await getResource();
+  
+  if (resource.isBusy) {
+    // Resource busy, delay until later
+    throw new DelayedError('Resource is busy');
+  }
+  
+  try {
+    resource.lock();
+    return await useResource(resource, job.data);
+  } finally {
+    resource.unlock();
+  }
+};
+```
+
+### External Service Status
+
+```typescript
+const processor = async (job) => {
+  const serviceStatus = await checkServiceStatus();
+  
+  if (serviceStatus === 'maintenance') {
+    throw new DelayedError(
+      'External service is in maintenance mode'
+    );
+  }
+  
+  return await callExternalService(job.data);
+};
+```
+
+## Behavior
+
+When DelayedError is thrown:
+
+1. The job is moved from `active` to `delayed` state
+2. The job will be picked up again after the delay period
+3. The job's `attemptsMade` counter is **not** incremented
+4. The job will be retried indefinitely until it succeeds or throws a different error
+
+## Setting Delay Duration
+
+The delay duration is determined by the job's existing delay settings. To control the delay:
+
+```typescript
+// Set initial delay when adding the job
+await queue.add('task', { data }, {
+  delay: 5000,  // 5 seconds delay for DelayedError retries
+});
+```
+
+Or change the delay dynamically:
+
+```typescript
+const processor = async (job) => {
+  const ready = await checkIfReady();
+  
+  if (!ready) {
+    // Change delay before throwing
+    await job.changeDelay(10000);  // 10 seconds
+    throw new DelayedError('Not ready');
+  }
+  
+  return await process(job.data);
+};
+```
+
+## Comparison with Other Approaches
+
+### DelayedError vs Regular Error
+
+```typescript
+// With DelayedError (doesn't count as attempt)
+const processor1 = async (job) => {
+  if (!ready) {
+    throw new DelayedError('Not ready');
+    // Job goes to delayed, attemptsMade unchanged
+  }
+};
+
+// With regular error (counts as attempt)
+const processor2 = async (job) => {
+  if (!ready) {
+    throw new Error('Not ready');
+    // Job may retry or fail based on attempts setting
+  }
+};
+```
+
+### DelayedError vs Manual Delay
+
+```typescript
+// With DelayedError
+const processor1 = async (job) => {
+  if (!ready) {
+    throw new DelayedError('Waiting for resource');
+  }
+  return await process(job.data);
+};
+
+// Manual approach (less efficient)
+const processor2 = async (job) => {
+  while (!await checkIfReady()) {
+    await new Promise(resolve => setTimeout(resolve, 5000));
+  }
+  return await process(job.data);
+};
+```
+
+## Infinite Delay Protection
+
+Be careful with DelayedError to avoid infinite loops:
+
+```typescript
+const processor = async (job) => {
+  // Track how many times we've delayed
+  const delayCount = job.data.delayCount || 0;
+  
+  if (delayCount > 10) {
+    throw new Error('Exceeded maximum delay count');
+  }
+  
+  const ready = await checkIfReady();
+  
+  if (!ready) {
+    // Increment delay counter
+    await job.updateData({
+      ...job.data,
+      delayCount: delayCount + 1,
+    });
+    
+    throw new DelayedError(`Not ready (attempt ${delayCount + 1})`);
+  }
+  
+  return await process(job.data);
+};
+```
+
+## Monitoring Delayed Jobs
+
+```typescript
+import { Worker, DelayedError } from 'bullmq';
+
+const worker = new Worker('myQueue', processor);
+
+worker.on('failed', (job, error) => {
+  if (error.name === 'DelayedError') {
+    console.log(`Job ${job.id} delayed:`, error.message);
+    // This is expected behavior, not a real failure
+  } else {
+    console.error(`Job ${job.id} failed:`, error.message);
+  }
+});
+```
+
+## When to Use DelayedError
+
+Use DelayedError when:
+
+- Waiting for external dependencies to become available
+- Waiting for specific time conditions
+- Resources are temporarily unavailable
+- External services are temporarily down
+- Data is being processed by another job
+
+Don't use DelayedError for:
+
+- Validation errors - use [UnrecoverableError](/api/errors/unrecoverable-error)
+- Rate limiting - use [RateLimitError](/api/errors/rate-limit-error)
+- Permanent failures - throw regular Error or UnrecoverableError
+- Normal retry logic - use job attempts and backoff
+
+## Related
+
+- [UnrecoverableError](/api/errors/unrecoverable-error) - Fail job immediately
+- [RateLimitError](/api/errors/rate-limit-error) - Rate limiting
+- [WaitingChildrenError](/api/errors/waiting-children-error) - Wait for child jobs
+- [Job.changeDelay()](/api/job) - Change job delay programmatically

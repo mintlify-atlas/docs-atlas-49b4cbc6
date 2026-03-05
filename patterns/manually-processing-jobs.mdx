@@ -1,0 +1,154 @@
+---
+title: "Manually Processing Jobs"
+description: "Fetch and process jobs manually without automatic worker processing"
+---
+
+When a Worker is instantiated, the most common usage is to specify a process function so that the worker will automatically process the jobs that arrive to the queue.
+
+Sometimes however it is useful to be able to fetch the jobs manually. Just instantiate the worker without a processor and call `getNextJob` to fetch the next job.
+
+## Basic Manual Processing
+
+```typescript
+const worker = new Worker('my-queue');
+
+// Specify a unique token
+const token = 'my-token';
+
+const job = (await worker.getNextJob(token)) as Job;
+
+// Access job.data and do something with the job
+// processJob(job.data)
+if (succeeded) {
+  await job.moveToCompleted('some return value', token, false);
+} else {
+  await job.moveToFailed(new Error('my error message'), token, false);
+}
+
+await worker.close();
+```
+
+## Job Locks and Tokens
+
+There is an important consideration regarding job "locks" when processing manually. Locks prevent workers from fetching a job that is already being processed by another worker. The ownership of the lock is determined by the "token" that is sent when getting the job.
+
+<Info>
+The lock duration setting is called "visibility window" in other queue systems.
+</Info>
+
+Normally a job gets locked as soon as it is fetched from the queue with a max duration of the specified `lockDuration` worker option. The default is 30 seconds but can be changed to any value easily:
+
+```typescript
+const worker = new Worker('my-queue', null, { lockDuration: 60000 });
+```
+
+## Extending Locks
+
+When using standard worker processors, the lock is renewed automatically after half the lock duration time has passed. However, this mechanism does not exist when processing jobs manually, so to avoid the job being moved back to the waiting list of the queue, you need to make sure to process the job faster than the `lockDuration`, or manually extend the lock:
+
+```typescript
+const job = (await worker.getNextJob(token)) as Job;
+
+// Extend the lock 30 more seconds
+await job.extendLock(token, 30000);
+```
+
+## Choosing a Token
+
+A token represents ownership by given worker currently working on a given job. If the worker dies unexpectedly, the job could be picked up by another worker when the lock expires. A good approach for generating tokens for jobs is simply to generate a UUID for every new job, but it all depends on your specific use case.
+
+## Checking for Stalled Jobs
+
+When processing jobs manually you may also want to start the stalled jobs checker. This checker is needed to move stalled jobs (whose lock has expired) back to the wait status (or failed if they have exhausted the maximum number of [stalled attempts](https://api.docs.bullmq.io/interfaces/v5.WorkerOptions.html#maxstalledcount), which is 1 by default).
+
+```typescript
+await worker.startStalledCheckTimer()
+```
+
+The checker will run periodically (based on the [`stalledInterval`](https://api.docs.bullmq.io/interfaces/v5.WorkerOptions.html#stalledinterval) option) until the worker is closed.
+
+## Looping Through Jobs
+
+In many cases, you will have an "infinite" loop that processes jobs one by one like the following example. Note that the third parameter in `job.moveToCompleted`/`job.moveToFailed` is not used, signalling that the next job should be returned automatically.
+
+```typescript
+const worker = new Worker('my-queue');
+
+const token = 'my-token';
+let job;
+
+while (1) {
+  let jobData = null,
+    jobId,
+    success;
+
+  if (job) {
+    // Use job.data to process this particular job.
+    // and set success variable if succeeded
+
+    if (success) {
+      [jobData, jobId] = await job.moveToCompleted('some return value', token);
+    } else {
+      await job.moveToFailed(new Error('some error message'), token);
+    }
+
+    if (jobData) {
+      job = Job.fromJSON(worker, jobData, jobId);
+    } else {
+      job = null;
+    }
+  } else {
+    if (!job) {
+      job = await worker.getNextJob(token);
+    }
+  }
+}
+```
+
+## Rate Limiting
+
+If you want to move a job back to wait because your queue is rate limited:
+
+```typescript
+const worker = new Worker('my-queue', null, { connection, prefix });
+const token = 'my-token';
+await Job.create(queue, 'test', { foo: 'bar' });
+const job = (await worker.getNextJob(token)) as Job;
+
+await queue.rateLimit(60000);
+await job.moveToWait(token);
+```
+
+## Use Cases
+
+<CardGroup cols={2}>
+  <Card title="Custom Processing Logic" icon="code">
+    Implement complex job selection or processing logic
+  </Card>
+  <Card title="External Schedulers" icon="calendar">
+    Integrate with external scheduling systems
+  </Card>
+  <Card title="Batch Processing" icon="layer-group">
+    Process multiple jobs together for efficiency
+  </Card>
+  <Card title="Testing" icon="flask">
+    More control for testing job processing
+  </Card>
+</CardGroup>
+
+## Related Resources
+
+<CardGroup cols={2}>
+  <Card title="Get Next Job API" icon="code" href="/api/worker#getnextjob">
+    API reference for worker.getNextJob
+  </Card>
+  <Card title="Move To Completed API" icon="code" href="/api/job#movetocompleted">
+    API reference for job.moveToCompleted
+  </Card>
+  <Card title="Move To Failed API" icon="code" href="/api/job#movetofailed">
+    API reference for job.moveToFailed
+  </Card>
+  <Card title="Move To Wait API" icon="code" href="/api/job#movetowait">
+    API reference for job.moveToWait
+  </Card>
+</CardGroup>

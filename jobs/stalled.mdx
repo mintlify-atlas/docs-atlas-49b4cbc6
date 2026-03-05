@@ -1,0 +1,333 @@
+---
+title: "Stalled Jobs"
+description: "Understanding and preventing stalled jobs in BullMQ"
+---
+
+<Info>
+From BullMQ 2.0 onwards, the `QueueScheduler` is not needed anymore. For manually checking stalled jobs, see the [manually fetching jobs pattern](/patterns/manually-fetching-jobs#checking-for-stalled-jobs).
+</Info>
+
+## What is a Stalled Job?
+
+When a job is in an active state (being processed by a worker), it needs to continuously update the queue to notify that the worker is still working on it. This mechanism prevents a worker that crashes or enters an endless loop from keeping a job in an active state forever.
+
+When a worker fails to notify the queue that it's still working on a job, that job is moved back to the waiting list or to the failed set. We say the job has **stalled**, and the queue emits a `stalled` event.
+
+From `src/classes/job.ts:118`:
+
+```typescript
+export class Job {
+  /**
+   * Number of times where job has stalled.
+   * @defaultValue 0
+   */
+  stalledCounter = 0;
+}
+```
+
+<Info>
+There is no "stalled" state - only a `stalled` event emitted when a job is automatically moved from _active_ to _waiting_ state.
+</Info>
+
+## Stalled Job Limit
+
+If a job stalls more than a predefined limit (see the [`maxStalledCount` option](https://api.docs.bullmq.io/interfaces/v5.WorkerOptions.html#maxstalledcount)), the job will be failed permanently with the error "_job stalled more than allowable limit_".
+
+<Warning>
+The default `maxStalledCount` is 1, as stalled jobs should be a rare occurrence. You can increase this number if needed, but investigate why jobs are stalling instead.
+</Warning>
+
+```typescript
+import { Worker } from 'bullmq';
+
+const worker = new Worker(
+  'Paint',
+  async job => {
+    // Process job
+  },
+  {
+    maxStalledCount: 3, // Allow job to stall up to 3 times
+  }
+);
+```
+
+## Preventing Stalled Jobs
+
+To avoid stalled jobs:
+
+### 1. Avoid CPU-Intensive Operations
+
+Make sure your worker doesn't keep the Node.js event loop too busy. The default max stalled check duration is 30 seconds.
+
+```typescript
+// Bad - blocks event loop
+worker.process(async job => {
+  for (let i = 0; i < 1000000000; i++) {
+    // CPU-intensive loop
+  }
+});
+
+// Good - use async operations
+worker.process(async job => {
+  await processInChunks(job.data);
+});
+```
+
+### 2. Use Sandboxed Processors
+
+Workers can spawn separate Node.js processes, running independently from the main process:
+
+<CodeGroup>
+
+```typescript main.ts
+import { Worker } from 'bullmq';
+
+// Worker will load processor from separate file
+const worker = new Worker('Paint', './painter.js');
+```
+
+```typescript painter.ts
+// This runs in a separate process
+export default async (job) => {
+  // Paint something
+  return { painted: true };
+};
+```
+
+</CodeGroup>
+
+Sandboxed processors provide:
+- **Isolation**: Crashes don't affect the main process
+- **CPU utilization**: Better use of multi-core systems
+- **Memory safety**: Memory leaks are contained
+
+### 3. Increase Stall Check Interval
+
+If your jobs legitimately take a long time to process:
+
+```typescript
+import { Worker } from 'bullmq';
+
+const worker = new Worker(
+  'Paint',
+  async job => {
+    // Long-running task
+  },
+  {
+    stalledInterval: 60000, // Check for stalled jobs every 60 seconds
+    maxStalledCount: 2,
+  }
+);
+```
+
+## Listening to Stalled Events
+
+Monitor when jobs stall:
+
+```typescript
+import { QueueEvents } from 'bullmq';
+
+const queueEvents = new QueueEvents('Paint');
+
+queueEvents.on('stalled', ({ jobId, prev }) => {
+  console.log(`Job ${jobId} stalled. Previous state: ${prev}`);
+});
+```
+
+## Worker Lock Extension
+
+Workers automatically extend locks on jobs they're processing. If a worker crashes or loses connection, the lock expires and the job is marked as stalled.
+
+From `src/classes/job.ts:703`:
+
+```typescript
+/**
+ * Extend the lock for this job.
+ *
+ * @param token - unique token for the lock
+ * @param duration - lock duration in milliseconds
+ */
+extendLock(token: string, duration: number): Promise<number> {
+  return this.scripts.extendLock(this.id, token, duration);
+}
+```
+
+## Common Causes of Stalled Jobs
+
+<AccordionGroup>
+
+<Accordion title="Worker Crashes">
+  If a worker process crashes while processing a job:
+  
+  ```typescript
+  // Handle uncaught errors to prevent crashes
+  process.on('uncaughtException', (error) => {
+    console.error('Uncaught exception:', error);
+    // Graceful shutdown
+  });
+  
+  const worker = new Worker('Paint', async job => {
+    try {
+      await processJob(job);
+    } catch (error) {
+      // Handle errors properly
+      throw error;
+    }
+  });
+  ```
+</Accordion>
+
+<Accordion title="Network Issues">
+  Connection loss to Redis:
+  
+  ```typescript
+  const worker = new Worker(
+    'Paint',
+    async job => {
+      // Process job
+    },
+    {
+      connection: {
+        host: 'redis-server',
+        port: 6379,
+        retryStrategy: (times) => {
+          return Math.min(times * 50, 2000);
+        },
+      },
+    }
+  );
+  ```
+</Accordion>
+
+<Accordion title="Blocked Event Loop">
+  CPU-intensive synchronous operations:
+  
+  ```typescript
+  import { Worker } from 'bullmq';
+  import { Worker as WorkerThreads } from 'worker_threads';
+  
+  const worker = new Worker('Paint', async job => {
+    // Offload CPU-intensive work to worker threads
+    return new Promise((resolve, reject) => {
+      const workerThread = new WorkerThreads('./cpu-intensive.js');
+      workerThread.on('message', resolve);
+      workerThread.on('error', reject);
+      workerThread.postMessage(job.data);
+    });
+  });
+  ```
+</Accordion>
+
+<Accordion title="Memory Pressure">
+  Out of memory errors:
+  
+  ```typescript
+  // Monitor memory usage
+  const worker = new Worker('Paint', async job => {
+    const memUsage = process.memoryUsage();
+    if (memUsage.heapUsed > 1024 * 1024 * 1024) { // 1GB
+      console.warn('High memory usage:', memUsage);
+    }
+    
+    await processJob(job);
+  });
+  ```
+</Accordion>
+
+</AccordionGroup>
+
+## Best Practices
+
+<CardGroup cols={2}>
+
+<Card title="Monitor Stalls" icon="chart-line">
+  Track stalled jobs as a key metric. Frequent stalling indicates a problem.
+</Card>
+
+<Card title="Graceful Shutdown" icon="power-off">
+  Implement proper shutdown procedures to finish processing before terminating.
+</Card>
+
+<Card title="Use Sandboxing" icon="box">
+  Isolate job processing in separate processes for better reliability.
+</Card>
+
+<Card title="Set Realistic Limits" icon="gauge">
+  Configure `stalledInterval` and `maxStalledCount` based on your job characteristics.
+</Card>
+
+</CardGroup>
+
+## Graceful Shutdown Example
+
+```typescript
+import { Worker } from 'bullmq';
+
+const worker = new Worker('Paint', async job => {
+  // Process job
+});
+
+const shutdown = async () => {
+  console.log('Shutting down worker...');
+  
+  // Stop accepting new jobs
+  await worker.close();
+  
+  console.log('Worker shut down gracefully');
+  process.exit(0);
+};
+
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
+```
+
+## Debugging Stalled Jobs
+
+When investigating stalled jobs:
+
+1. **Check worker logs**: Look for crashes or errors
+2. **Monitor Redis connection**: Ensure stable connection
+3. **Profile CPU usage**: Identify blocking operations
+4. **Review job data**: Large payloads can cause issues
+5. **Check external dependencies**: Timeouts from external services
+
+```typescript
+import { QueueEvents } from 'bullmq';
+
+const queueEvents = new QueueEvents('Paint');
+
+queueEvents.on('stalled', async ({ jobId }) => {
+  const job = await Job.fromId(queue, jobId);
+  
+  console.log('Stalled job details:', {
+    id: job.id,
+    name: job.name,
+    data: job.data,
+    stalledCounter: job.stalledCounter,
+    attemptsMade: job.attemptsMade,
+    processedBy: job.processedBy,
+  });
+});
+```
+
+## Read More
+
+<CardGroup cols={2}>
+
+<Card title="Worker Options" icon="gear" href="https://api.docs.bullmq.io/interfaces/v5.WorkerOptions.html#maxstalledcount">
+  maxStalledCount API Reference
+</Card>
+
+<Card title="Manually Fetching Jobs" icon="hand" href="/patterns/manually-fetching-jobs#checking-for-stalled-jobs">
+  Pattern for manual stalled job checking
+</Card>
+
+<Card title="Sandboxed Processors" icon="box" href="/guide/workers/sandboxed-processors">
+  Learn about sandboxed processors
+</Card>
+
+<Card title="Queue Events" icon="bell" href="/guide/events">
+  All available queue events
+</Card>
+
+</CardGroup>

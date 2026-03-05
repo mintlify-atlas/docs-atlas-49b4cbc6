@@ -1,0 +1,237 @@
+---
+title: Installation
+description: Install BullMQ in your Node.js project
+---
+
+BullMQ is available as an npm package. You can install it using your preferred package manager.
+
+## Prerequisites
+
+Before installing BullMQ, ensure you have:
+
+- **Node.js** 16.x or higher
+- **Redis** 6.2.0 or higher (Redis 7+ recommended)
+
+<Warning>
+BullMQ requires a Redis instance to function. Make sure you have Redis installed and running before using BullMQ.
+</Warning>
+
+## Install BullMQ
+
+Choose your preferred package manager:
+
+<CodeGroup>
+
+```bash npm
+npm install bullmq
+```
+
+```bash yarn
+yarn add bullmq
+```
+
+```bash pnpm
+pnpm add bullmq
+```
+
+```bash bun
+bun add bullmq
+```
+
+</CodeGroup>
+
+The package includes TypeScript type definitions, so no additional `@types` package is needed.
+
+## Install Redis
+
+If you don't have Redis installed yet, you have several options:
+
+### Using Docker
+
+The easiest way to get Redis running locally:
+
+```bash
+docker run -d -p 6379:6379 redis:7-alpine
+```
+
+### Using Docker Compose
+
+Create a `docker-compose.yml` file:
+
+```yaml
+version: '3.8'
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - '6379:6379'
+    command: redis-server --maxmemory-policy noeviction
+```
+
+Then run:
+
+```bash
+docker-compose up -d
+```
+
+<Note>
+The `maxmemory-policy noeviction` setting is important to prevent Redis from automatically removing keys, which would cause unexpected errors in BullMQ.
+</Note>
+
+### System Package Manager
+
+<CodeGroup>
+
+```bash macOS
+brew install redis
+brew services start redis
+```
+
+```bash Ubuntu/Debian
+sudo apt update
+sudo apt install redis-server
+sudo systemctl start redis-server
+```
+
+```bash Fedora/RHEL
+sudo dnf install redis
+sudo systemctl start redis
+```
+
+</CodeGroup>
+
+### Cloud Redis Providers
+
+For production environments, consider managed Redis services:
+
+- **AWS** - ElastiCache or MemoryDB
+- **Google Cloud** - Memorystore
+- **Azure** - Azure Cache for Redis
+- **Upstash** - Serverless Redis
+- **Redis Cloud** - Official Redis hosting
+
+## Redis Configuration
+
+For optimal BullMQ performance, configure your Redis instance with these settings:
+
+```bash
+# Prevent automatic key eviction
+maxmemory-policy noeviction
+
+# Enable persistence (optional but recommended)
+save 900 1
+save 300 10
+save 60 10000
+
+# Append-only file for durability (optional)
+appendonly yes
+appendfsync everysec
+```
+
+<Warning>
+**Important:** Always set `maxmemory-policy noeviction` to avoid automatic removal of keys, which would cause unexpected errors in BullMQ.
+</Warning>
+
+## Verify Installation
+
+Create a simple test file to verify your installation:
+
+```typescript test.ts
+import { Queue } from 'bullmq';
+
+const queue = new Queue('test');
+
+console.log('BullMQ installed successfully!');
+
+await queue.add('test-job', { message: 'Hello BullMQ!' });
+console.log('Job added to queue');
+
+await queue.close();
+```
+
+Run it:
+
+```bash
+node --loader ts-node/esm test.ts
+# or with tsx
+npx tsx test.ts
+```
+
+If everything is installed correctly, you should see the success messages.
+
+## Alternative Redis Implementations
+
+BullMQ is compatible with Redis-compatible databases:
+
+### Dragonfly
+
+[Dragonfly](https://www.dragonflydb.io/) is a drop-in Redis replacement that offers:
+
+- Massive performance improvements by utilizing all CPU cores
+- More efficient memory usage
+- Full BullMQ compatibility
+
+```bash
+docker run -p 6379:6379 docker.dragonflydb.io/dragonflydb/dragonfly
+```
+
+### Valkey
+
+Valkey is an open-source Redis fork that is fully compatible with BullMQ.
+
+## IoRedis Dependency
+
+BullMQ uses [ioredis](https://github.com/luin/ioredis) as its Redis client. This is installed automatically as a dependency. You can also install it explicitly if you want to manage Redis connections yourself:
+
+<CodeGroup>
+
+```bash npm
+npm install ioredis
+```
+
+```bash yarn
+yarn add ioredis
+```
+
+```bash pnpm
+pnpm add ioredis
+```
+
+```bash bun
+bun add ioredis
+```
+
+</CodeGroup>
+
+## TypeScript Support
+
+BullMQ is written in TypeScript and includes type definitions. For the best development experience:
+
+1. Use TypeScript 4.5 or higher
+2. Enable `strict` mode in your `tsconfig.json`
+3. Consider enabling `esModuleInterop` for easier imports
+
+```json tsconfig.json
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "commonjs",
+    "lib": ["ES2020"],
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true
+  }
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/quick-start">
+    Create your first queue and worker
+  </Card>
+  <Card title="Architecture" icon="sitemap" href="/architecture">
+    Learn how BullMQ works internally
+  </Card>
+</CardGroup>

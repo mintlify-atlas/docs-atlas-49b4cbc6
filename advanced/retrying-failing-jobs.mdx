@@ -1,0 +1,550 @@
+---
+title: 'Retrying Failing Jobs'
+description: 'Automatically retry failed jobs with configurable backoff strategies'
+---
+
+In any job processing system, some jobs will inevitably fail. BullMQ provides powerful retry mechanisms with built-in and custom backoff strategies to handle failures gracefully.
+
+## When Jobs Fail
+
+A job is considered failed when:
+
+1. **The processor throws an exception**
+2. **The job becomes stalled** and exceeds the `maxStalledCount` setting
+
+```typescript
+import { Worker } from 'bullmq';
+
+const worker = new Worker('tasks', async job => {
+  // This will cause the job to fail
+  throw new Error('Something went wrong');
+});
+
+worker.on('failed', (job, error) => {
+  console.error(`Job ${job.id} failed:`, error.message);
+});
+```
+
+<Warning>
+  Exceptions must be `Error` objects for BullMQ to work correctly. Always throw proper Error instances. Consider using the [ESLint no-throw-literal rule](https://eslint.org/docs/latest/rules/no-throw-literal) to enforce this.
+</Warning>
+
+## Basic Job Retries
+
+Enable automatic retries using the `attempts` option:
+
+```typescript
+import { Queue } from 'bullmq';
+
+const queue = new Queue('tasks');
+
+// This job will be retried up to 3 times (including the first attempt)
+await queue.add(
+  'process-data',
+  { userId: 123 },
+  {
+    attempts: 3,
+  },
+);
+```
+
+<Info>
+  Without a backoff strategy, jobs are retried immediately upon failure.
+</Info>
+
+<Info>
+  Retried jobs respect their priority. When moved back to the waiting state, they maintain their original priority ordering.
+</Info>
+
+## Built-in Backoff Strategies
+
+BullMQ provides two built-in backoff strategies: **fixed** and **exponential**.
+
+### Fixed Backoff
+
+Retry after a constant delay:
+
+```typescript
+import { Queue } from 'bullmq';
+
+const queue = new Queue('tasks');
+
+await queue.add(
+  'send-email',
+  { to: 'user@example.com' },
+  {
+    attempts: 3,
+    backoff: {
+      type: 'fixed',
+      delay: 1000, // Wait 1 second between retries
+    },
+  },
+);
+```
+
+**Timeline example:**
+- Attempt 1: Fails immediately
+- Attempt 2: After 1 second
+- Attempt 3: After 1 second
+
+### Fixed Backoff with Jitter
+
+Add randomness to prevent thundering herd problems:
+
+```typescript
+await queue.add(
+  'api-call',
+  { url: 'https://api.example.com' },
+  {
+    attempts: 5,
+    backoff: {
+      type: 'fixed',
+      delay: 1000,
+      jitter: 0.5, // Random delay between 500ms and 1000ms
+    },
+  },
+);
+```
+
+<ParamField path="jitter" type="number" default="0">
+  Value between 0 and 1. A jitter of 0.5 with delay 1000 produces random delays between 500ms and 1000ms.
+</ParamField>
+
+### Exponential Backoff
+
+Retry with exponentially increasing delays:
+
+```typescript
+import { Queue } from 'bullmq';
+
+const queue = new Queue('tasks');
+
+await queue.add(
+  'fetch-data',
+  { userId: 123 },
+  {
+    attempts: 5,
+    backoff: {
+      type: 'exponential',
+      delay: 1000, // Base delay
+    },
+  },
+);
+```
+
+**Formula:** `2^(attempt - 1) × delay`
+
+**Timeline example with 1000ms base:**
+- Attempt 1: Fails immediately
+- Attempt 2: After 1 second (2^0 × 1000)
+- Attempt 3: After 2 seconds (2^1 × 1000)
+- Attempt 4: After 4 seconds (2^2 × 1000)
+- Attempt 5: After 8 seconds (2^3 × 1000)
+
+### Exponential Backoff with Jitter
+
+```typescript
+await queue.add(
+  'api-call',
+  { endpoint: '/users' },
+  {
+    attempts: 7,
+    backoff: {
+      type: 'exponential',
+      delay: 3000,
+      jitter: 0.5, // Randomize between 50% and 100% of calculated delay
+    },
+  },
+);
+```
+
+**Example delays with jitter 0.5:**
+- Attempt 2: Between 1500ms and 3000ms
+- Attempt 3: Between 3000ms and 6000ms
+- Attempt 4: Between 6000ms and 12000ms
+
+<Info>
+  Jitter helps prevent multiple jobs from retrying simultaneously, which can overwhelm downstream services.
+</Info>
+
+## Default Backoff Strategy
+
+Set a default backoff strategy for all jobs in a queue:
+
+```typescript
+import { Queue } from 'bullmq';
+
+const queue = new Queue('tasks', {
+  defaultJobOptions: {
+    attempts: 3,
+    backoff: {
+      type: 'exponential',
+      delay: 1000,
+    },
+  },
+});
+
+// This job inherits the default retry settings
+await queue.add('task1', { data: 'value' });
+
+// This job overrides the defaults
+await queue.add('task2', { data: 'value' }, {
+  attempts: 5,
+  backoff: { type: 'fixed', delay: 2000 },
+});
+```
+
+## Custom Backoff Strategies
+
+Implement your own backoff logic:
+
+```typescript
+import { Worker } from 'bullmq';
+
+const worker = new Worker('tasks', async job => {
+  return await processJob(job);
+}, {
+  settings: {
+    backoffStrategy: (attemptsMade: number) => {
+      // Linear backoff: attemptsMade * 1000
+      return attemptsMade * 1000;
+    },
+  },
+});
+```
+
+**Timeline example:**
+- Attempt 2: After 1 second (1 × 1000)
+- Attempt 3: After 2 seconds (2 × 1000)
+- Attempt 4: After 3 seconds (3 × 1000)
+
+### Advanced Custom Backoff
+
+Access more parameters for sophisticated strategies:
+
+```typescript
+import { Worker, Job } from 'bullmq';
+
+const worker = new Worker('tasks', async job => {
+  return await processJob(job);
+}, {
+  settings: {
+    backoffStrategy: (
+      attemptsMade: number,
+      type: string,
+      err: Error,
+      job: Job,
+    ) => {
+      // Custom logic based on error type
+      if (err.message.includes('rate limit')) {
+        // Longer delay for rate limit errors
+        return 60000; // 1 minute
+      }
+      
+      if (err.message.includes('timeout')) {
+        // Shorter delay for timeouts
+        return 5000; // 5 seconds
+      }
+      
+      // Default exponential backoff
+      return Math.pow(2, attemptsMade) * 1000;
+    },
+  },
+});
+```
+
+### Special Return Values
+
+<ParamField path="0" type="number">
+  Return `0` to retry immediately. Jobs move to the end of the waiting list (priority 0) or maintain priority for prioritized jobs.
+</ParamField>
+
+<ParamField path="-1" type="number">
+  Return `-1` to prevent retry. The job moves directly to the failed state.
+</ParamField>
+
+```typescript
+const worker = new Worker('tasks', async job => {
+  return await processJob(job);
+}, {
+  settings: {
+    backoffStrategy: (attemptsMade: number, type: string, err: Error) => {
+      // Don't retry certain errors
+      if (err.message.includes('Invalid input')) {
+        return -1; // Move to failed immediately
+      }
+      
+      // Retry others after 5 seconds
+      return 5000;
+    },
+  },
+});
+```
+
+### Using Custom Backoff Types
+
+Define multiple custom backoff strategies:
+
+```typescript
+import { Worker, Job } from 'bullmq';
+
+const worker = new Worker('tasks', async job => {
+  return await processJob(job);
+}, {
+  settings: {
+    backoffStrategy: (
+      attemptsMade: number,
+      type: string,
+      err: Error,
+      job: Job,
+    ) => {
+      switch (type) {
+        case 'aggressive':
+          return attemptsMade * 500; // Short delays
+        
+        case 'conservative':
+          return attemptsMade * 5000; // Long delays
+        
+        case 'dynamic':
+          // Adjust based on job data
+          return job.data.priority === 'high' ? 1000 : 10000;
+        
+        default:
+          throw new Error('Invalid backoff type');
+      }
+    },
+  },
+});
+```
+
+Use the custom backoff types when adding jobs:
+
+```typescript
+import { Queue } from 'bullmq';
+
+const queue = new Queue('tasks');
+
+// Use 'aggressive' backoff strategy
+await queue.add('urgent-task', { data: 'value' }, {
+  attempts: 5,
+  backoff: { type: 'aggressive' },
+});
+
+// Use 'conservative' backoff strategy
+await queue.add('batch-task', { data: 'value' }, {
+  attempts: 10,
+  backoff: { type: 'conservative' },
+});
+```
+
+## Practical Examples
+
+### Example 1: API Calls with Retry
+
+```typescript
+import { Queue, Worker } from 'bullmq';
+
+const queue = new Queue('api-calls');
+const worker = new Worker('api-calls', async job => {
+  const response = await fetch(job.data.url);
+  
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+  }
+  
+  return response.json();
+});
+
+// Add job with exponential backoff
+await queue.add('fetch-user', 
+  { url: 'https://api.example.com/users/123' },
+  {
+    attempts: 5,
+    backoff: {
+      type: 'exponential',
+      delay: 2000,
+      jitter: 0.3,
+    },
+  },
+);
+```
+
+### Example 2: Database Operations
+
+```typescript
+import { Queue, Worker } from 'bullmq';
+
+const queue = new Queue('db-writes', {
+  defaultJobOptions: {
+    attempts: 3,
+    backoff: {
+      type: 'fixed',
+      delay: 5000, // 5 seconds between retries
+    },
+  },
+});
+
+const worker = new Worker('db-writes', async job => {
+  try {
+    await db.transaction(async trx => {
+      await trx.insert(job.data);
+    });
+  } catch (error) {
+    if (error.code === 'DEADLOCK') {
+      // Retry on deadlock
+      throw error;
+    } else if (error.code === 'UNIQUE_VIOLATION') {
+      // Don't retry on duplicate key
+      throw new Error('Duplicate entry - will not retry');
+    }
+    throw error;
+  }
+}, {
+  settings: {
+    backoffStrategy: (attempts, type, err) => {
+      // Don't retry on validation errors
+      if (err.message.includes('will not retry')) {
+        return -1;
+      }
+      return 5000; // Default retry delay
+    },
+  },
+});
+```
+
+### Example 3: Email with Rate Limiting
+
+```typescript
+import { Queue, Worker } from 'bullmq';
+
+const queue = new Queue('emails');
+const worker = new Worker('emails', async job => {
+  const response = await emailProvider.send(job.data);
+  
+  if (response.status === 429) {
+    // Rate limited
+    throw new Error('rate limit exceeded');
+  }
+  
+  return response;
+}, {
+  settings: {
+    backoffStrategy: (attempts, type, err) => {
+      if (err.message.includes('rate limit')) {
+        // Wait longer for rate limits
+        return 60000 * attempts; // 1 min, 2 min, 3 min...
+      }
+      // Standard exponential backoff
+      return Math.pow(2, attempts) * 1000;
+    },
+  },
+});
+
+await queue.add('welcome-email',
+  { to: 'user@example.com', template: 'welcome' },
+  { attempts: 5 },
+);
+```
+
+## Monitoring Retries
+
+Track retry attempts and failures:
+
+```typescript
+import { Worker, QueueEvents } from 'bullmq';
+
+const queueEvents = new QueueEvents('tasks');
+
+queueEvents.on('failed', ({ jobId, failedReason, prev }) => {
+  console.log(`Job ${jobId} failed: ${failedReason}`);
+  
+  // Check if job will retry
+  if (prev === 'active') {
+    console.log('Job will be retried');
+  } else {
+    console.log('Job moved to failed (no more retries)');
+  }
+});
+
+queueEvents.on('retrying', ({ jobId, attemptsMade }) => {
+  console.log(`Job ${jobId} retrying (attempt ${attemptsMade})`);
+});
+
+const worker = new Worker('tasks', async job => {
+  console.log(`Processing attempt ${job.attemptsMade + 1}/${job.opts.attempts}`);
+  return await processJob(job);
+});
+```
+
+## Best Practices
+
+<Steps>
+  <Step title="Use exponential backoff for external APIs">
+    Exponential backoff with jitter prevents overwhelming recovering services.
+  </Step>
+  
+  <Step title="Set appropriate attempt limits">
+    Balance between persistence and resource waste. Most jobs should succeed within 3-5 attempts.
+  </Step>
+  
+  <Step title="Add jitter to prevent thundering herds">
+    Use jitter (0.3-0.5) when many jobs might fail simultaneously.
+  </Step>
+  
+  <Step title="Don't retry permanent failures">
+    Use custom backoff strategies to return `-1` for validation errors or other permanent failures.
+  </Step>
+  
+  <Step title="Log retry attempts">
+    Monitor `attemptsMade` to identify problematic jobs or services.
+  </Step>
+  
+  <Step title="Consider job-specific strategies">
+    Use custom backoff types for different job categories with different retry requirements.
+  </Step>
+</Steps>
+
+## Stopping Retries
+
+To prevent a job from retrying, use the `UnrecoverableError`:
+
+```typescript
+import { Worker, UnrecoverableError } from 'bullmq';
+
+const worker = new Worker('tasks', async job => {
+  // Validate input
+  if (!job.data.userId) {
+    // This job will not be retried
+    throw new UnrecoverableError('Missing userId');
+  }
+  
+  // This error will trigger retry
+  throw new Error('Temporary failure');
+});
+```
+
+See the [Stop Retrying Jobs pattern](https://docs.bullmq.io/patterns/stop-retrying-jobs) for more details.
+
+## Related Topics
+
+<CardGroup cols={2}>
+  <Card title="Rate Limiting" icon="gauge" href="/advanced/rate-limiting">
+    Control job processing rate
+  </Card>
+  <Card title="Stalled Jobs" icon="clock" href="/workers/stalled-jobs">
+    Understand and prevent stalled jobs
+  </Card>
+  <Card title="Unrecoverable Error" icon="triangle-exclamation" href="/api/errors/unrecoverable-error">
+    Prevent job retries
+  </Card>
+  <Card title="Job Options" icon="gear" href="/api/interfaces/job-options">
+    Configure job behavior
+  </Card>
+</CardGroup>
+
+## API Reference
+
+- [Job.attemptsMade](https://api.docs.bullmq.io/classes/v5.Job.html#attemptsmade)
+- [BaseJobOptions.attempts](https://api.docs.bullmq.io/interfaces/v5.BaseJobOptions.html#attempts)
+- [BaseJobOptions.backoff](https://api.docs.bullmq.io/interfaces/v5.BaseJobOptions.html#backoff)
+- [WorkerOptions.settings.backoffStrategy](https://api.docs.bullmq.io/interfaces/v5.WorkerOptions.html)

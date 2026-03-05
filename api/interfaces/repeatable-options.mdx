@@ -1,0 +1,332 @@
+---
+title: 'RepeatableOptions'
+description: 'Options for repeating jobs at scheduled intervals'
+---
+
+## Overview
+
+RepeatableOptions (also exported as RepeatOptions) defines configuration for jobs that repeat at specified intervals.
+
+<Note>
+  For new implementations, use `queue.upsertJobScheduler()` instead of the deprecated `repeat` option on jobs.
+</Note>
+
+## Interface
+
+```typescript
+interface RepeatableOptions {
+  name: string;
+  startDate?: number;
+  endDate?: number;
+  tz?: string;
+  limit?: number;
+  pattern?: string;
+  every?: number;
+  offset?: number;
+}
+```
+
+## Properties
+
+### pattern
+
+<ParamField path="pattern" type="string">
+  Cron pattern for scheduling (e.g., '0 * * * *' for every hour)
+</ParamField>
+
+### every
+
+<ParamField path="every" type="number">
+  Interval in milliseconds between job executions
+</ParamField>
+
+<Note>
+  Use either `pattern` or `every`, not both.
+</Note>
+
+### limit
+
+<ParamField path="limit" type="number">
+  Maximum number of iterations to execute
+</ParamField>
+
+### startDate
+
+<ParamField path="startDate" type="number | Date | string">
+  Timestamp when the repeat should start
+</ParamField>
+
+### endDate
+
+<ParamField path="endDate" type="number | Date | string">
+  Timestamp when the repeat should end
+</ParamField>
+
+### tz
+
+<ParamField path="tz" type="string">
+  Timezone for cron patterns (e.g., 'America/New_York')
+</ParamField>
+
+### offset
+
+<ParamField path="offset" type="number">
+  Offset in milliseconds to apply to the calculated next run time
+</ParamField>
+
+### immediately
+
+<ParamField path="immediately" type="boolean">
+  If true, runs the job immediately then schedules repeats
+</ParamField>
+
+## Examples
+
+### Cron Pattern
+
+```typescript
+import { Queue } from 'bullmq';
+
+const queue = new Queue('myQueue', {
+  connection: { host: 'localhost', port: 6379 },
+});
+
+// Every day at midnight
+await queue.upsertJobScheduler(
+  'daily-job',
+  { pattern: '0 0 * * *' },
+  {
+    name: 'cleanup',
+    data: { scope: 'full' },
+  }
+);
+
+// Every hour
+await queue.upsertJobScheduler(
+  'hourly-job',
+  { pattern: '0 * * * *' },
+  {
+    name: 'sync',
+    data: {},
+  }
+);
+
+// Every Monday at 9 AM
+await queue.upsertJobScheduler(
+  'weekly-report',
+  { pattern: '0 9 * * 1' },
+  {
+    name: 'report',
+    data: { type: 'weekly' },
+  }
+);
+```
+
+### Fixed Interval
+
+```typescript
+// Every 5 minutes
+await queue.upsertJobScheduler(
+  'health-check',
+  { every: 5 * 60 * 1000 },
+  {
+    name: 'check',
+    data: { service: 'api' },
+  }
+);
+
+// Every 30 seconds
+await queue.upsertJobScheduler(
+  'metrics',
+  { every: 30000 },
+  {
+    name: 'collect-metrics',
+    data: {},
+  }
+);
+```
+
+### With Timezone
+
+```typescript
+await queue.upsertJobScheduler(
+  'daily-est',
+  {
+    pattern: '0 9 * * *',  // 9 AM
+    tz: 'America/New_York',
+  },
+  {
+    name: 'morning-report',
+    data: {},
+  }
+);
+```
+
+### Limited Iterations
+
+```typescript
+// Run 10 times only
+await queue.upsertJobScheduler(
+  'limited-task',
+  {
+    pattern: '0 * * * *',  // Every hour
+    limit: 10,
+  },
+  {
+    name: 'task',
+    data: {},
+  }
+);
+```
+
+### With Start and End Dates
+
+```typescript
+await queue.upsertJobScheduler(
+  'campaign',
+  {
+    pattern: '0 9 * * *',
+    startDate: new Date('2024-01-01'),
+    endDate: new Date('2024-12-31'),
+    tz: 'America/New_York',
+  },
+  {
+    name: 'daily-campaign',
+    data: { campaignId: '123' },
+  }
+);
+```
+
+### Run Immediately
+
+```typescript
+await queue.upsertJobScheduler(
+  'immediate-repeat',
+  {
+    pattern: '0 */6 * * *',  // Every 6 hours
+    immediately: true,        // Run now, then every 6 hours
+  },
+  {
+    name: 'sync',
+    data: {},
+  }
+);
+```
+
+### With Offset
+
+```typescript
+// Run 5 seconds after the scheduled time
+await queue.upsertJobScheduler(
+  'delayed-start',
+  {
+    every: 60000,  // Every minute
+    offset: 5000,  // But 5 seconds after
+  },
+  {
+    name: 'task',
+    data: {},
+  }
+);
+```
+
+## Cron Pattern Format
+
+Cron patterns use the following format:
+
+```
+*    *    *    *    *
+┬    ┬    ┬    ┬    ┬
+│    │    │    │    │
+│    │    │    │    └─── day of week (0 - 7) (Sunday is 0 or 7)
+│    │    │    └────────── month (1 - 12)
+│    │    └─────────────────── day of month (1 - 31)
+│    └──────────────────────────── hour (0 - 23)
+└───────────────────────────────────── minute (0 - 59)
+```
+
+### Common Patterns
+
+```typescript
+// Every minute
+'* * * * *'
+
+// Every 5 minutes
+'*/5 * * * *'
+
+// Every hour at minute 30
+'30 * * * *'
+
+// Every day at midnight
+'0 0 * * *'
+
+// Every day at 2:30 PM
+'30 14 * * *'
+
+// Every Monday at 9 AM
+'0 9 * * 1'
+
+// Every 1st of the month at midnight
+'0 0 1 * *'
+
+// Every weekday at 6 PM
+'0 18 * * 1-5'
+
+// Every 15 minutes during business hours
+'*/15 9-17 * * 1-5'
+```
+
+## Timezone Support
+
+Timezones use IANA timezone identifiers:
+
+```typescript
+// Common timezones
+'America/New_York'
+'America/Los_Angeles'
+'America/Chicago'
+'Europe/London'
+'Europe/Paris'
+'Asia/Tokyo'
+'Asia/Shanghai'
+'Australia/Sydney'
+'UTC'
+```
+
+## Migration from Deprecated API
+
+### Old (Deprecated)
+
+```typescript
+await queue.add(
+  'task',
+  { data: 'value' },
+  {
+    repeat: {
+      pattern: '0 * * * *',
+      tz: 'America/New_York',
+    },
+  }
+);
+```
+
+### New (Recommended)
+
+```typescript
+await queue.upsertJobScheduler(
+  'task-scheduler',
+  {
+    pattern: '0 * * * *',
+    tz: 'America/New_York',
+  },
+  {
+    name: 'task',
+    data: { data: 'value' },
+  }
+);
+```
+
+## Related
+
+- [JobScheduler](/api/job-scheduler) - Manages scheduled repeating jobs
+- [RepeatOptions on MDN](https://github.com/kelektiv/node-cron) - Underlying cron library

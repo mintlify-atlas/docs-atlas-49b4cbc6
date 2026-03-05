@@ -1,0 +1,247 @@
+---
+title: "Delayed Jobs"
+description: "Schedule jobs to be processed at a future time"
+---
+
+## Overview
+
+Delayed jobs are placed into a special "delayed set" instead of being processed immediately. After the delay time has passed, the job moves to the waiting queue and is processed as a regular job.
+
+<Info>
+The delay time is quite accurate in most cases, but it's not guaranteed to be exact. Processing depends on worker availability and the number of other delayed jobs scheduled at that time.
+</Info>
+
+## Basic Usage
+
+Use the `delay` option with the amount of time in milliseconds to delay the job:
+
+```typescript
+import { Queue } from 'bullmq';
+
+const myQueue = new Queue('Paint');
+
+// Add a job that will be delayed by at least 5 seconds
+await myQueue.add('house', { color: 'white' }, { delay: 5000 });
+```
+
+From `src/classes/job.ts:88`:
+
+```typescript
+export class Job {
+  /**
+   * An amount of milliseconds to wait until this job can be processed.
+   * @defaultValue 0
+   */
+  delay = 0;
+}
+```
+
+## Scheduling for a Specific Time
+
+To process a job at a specific point in time, calculate the delay from now:
+
+```typescript
+const targetTime = new Date('03-07-2035 10:30');
+const delay = Number(targetTime) - Number(new Date());
+
+await myQueue.add('house', { color: 'white' }, { delay });
+```
+
+## Change Delay
+
+You can reschedule a delayed job after inserting it using the `changeDelay` method:
+
+```typescript
+import { Job, Queue } from 'bullmq';
+
+const queue = new Queue('Paint');
+const job = await Job.create(queue, 'test', { foo: 'bar' }, { delay: 2000 });
+
+// Reschedule the job to execute 4000ms (4 seconds) from now
+await job.changeDelay(4000);
+```
+
+From `src/classes/job.ts:1048`:
+
+```typescript
+/**
+ * Change delay of a delayed job.
+ *
+ * Reschedules a delayed job by setting a new delay from the current time.
+ * For example, calling changeDelay(5000) will reschedule the job to execute
+ * 5000 milliseconds (5 seconds) from now, regardless of the original delay.
+ *
+ * @param delay - milliseconds from now when the job should be processed.
+ * @returns void
+ * @throws JobNotExist
+ * This exception is thrown if jobId is missing.
+ * @throws JobNotInState
+ * This exception is thrown if job is not in delayed state.
+ */
+async changeDelay(delay: number): Promise<void> {
+  await this.scripts.changeDelay(this.id, delay);
+  this.delay = delay;
+}
+```
+
+<Warning>
+Only jobs currently in the **delayed** state can have their delay changed. Attempting to change the delay of a job in another state will throw an error.
+</Warning>
+
+## Delayed Job Lifecycle
+
+When a delayed job is added:
+
+1. Job is added to the "delayed" sorted set with the timestamp when it should be processed
+2. Workers periodically check for delayed jobs whose timestamp has passed
+3. When the delay expires, the job moves to the "wait" or "prioritized" list
+4. The job is then processed normally
+
+```typescript
+// Check if a job is delayed
+const isDelayed = await job.isDelayed();
+```
+
+From `src/classes/job.ts:985`:
+
+```typescript
+/**
+ * @returns true if the job is delayed.
+ */
+isDelayed(): Promise<boolean> {
+  return this.isInZSet('delayed');
+}
+```
+
+## Move to Delayed Programmatically
+
+You can manually move an active job to the delayed state:
+
+```typescript
+/**
+ * Moves the job to the delay set.
+ *
+ * @param timestamp - timestamp when the job should be moved back to "wait"
+ * @param token - token to check job is locked by current worker
+ */
+await job.moveToDelayed(Date.now() + 5000, token);
+```
+
+From `src/classes/job.ts:1413`:
+
+```typescript
+async moveToDelayed(timestamp: number, token?: string): Promise<void> {
+  const now = Date.now();
+  const delay = timestamp - now;
+  const finalDelay = delay > 0 ? delay : 0;
+  const movedToDelayed = await this.scripts.moveToDelayed(
+    this.id,
+    now,
+    finalDelay,
+    token,
+    { skipAttempt: true },
+  );
+  this.delay = finalDelay;
+
+  this.recordJobMetrics('delayed');
+
+  return movedToDelayed;
+}
+```
+
+## Job Options Interface
+
+From `src/interfaces/base-job-options.ts:21`:
+
+```typescript
+interface DefaultJobOptions {
+  /**
+   * An amount of milliseconds to wait until this job can be processed.
+   * Note that for accurate delays, worker and producers
+   * should have their clocks synchronized.
+   * @defaultValue 0
+   */
+  delay?: number;
+}
+```
+
+## Best Practices
+
+<CardGroup cols={2}>
+
+<Card title="Sync Clocks" icon="clock">
+  For accurate delays, ensure worker and producer clocks are synchronized (use NTP).
+</Card>
+
+<Card title="Avoid Long Delays" icon="calendar">
+  For delays longer than a few hours, consider using repeatable jobs or external schedulers.
+</Card>
+
+<Card title="Monitor Delayed Jobs" icon="chart-line">
+  Use `getDelayed()` to monitor the number of delayed jobs and their timestamps.
+</Card>
+
+<Card title="Handle Clock Skew" icon="triangle-exclamation">
+  Be aware that clock differences between servers can affect delay accuracy.
+</Card>
+
+</CardGroup>
+
+## Common Use Cases
+
+<AccordionGroup>
+
+<Accordion title="Retry with Delay">
+  Automatically retry failed jobs after a delay:
+  
+  ```typescript
+  await queue.add(
+    'apiCall',
+    { url: 'https://api.example.com' },
+    {
+      attempts: 3,
+      backoff: {
+        type: 'exponential',
+        delay: 1000,
+      },
+    }
+  );
+  ```
+</Accordion>
+
+<Accordion title="Scheduled Notifications">
+  Send notifications at a specific time:
+  
+  ```typescript
+  const scheduledTime = new Date('2025-12-25T09:00:00Z');
+  const delay = scheduledTime.getTime() - Date.now();
+  
+  await notificationQueue.add(
+    'sendEmail',
+    { to: 'user@example.com', subject: 'Merry Christmas!' },
+    { delay }
+  );
+  ```
+</Accordion>
+
+<Accordion title="Rate Limiting">
+  Delay jobs to implement rate limiting:
+  
+  ```typescript
+  const delayBetweenRequests = 1000; // 1 second
+  
+  for (let i = 0; i < requests.length; i++) {
+    await queue.add(
+      'apiRequest',
+      requests[i],
+      { delay: i * delayBetweenRequests }
+    );
+  }
+  ```
+</Accordion>
+
+</AccordionGroup>
+
+<Card title="API Reference" icon="book" href="https://api.docs.bullmq.io/classes/v5.Job.html#changedelay">
+  View the Change Delay API Reference
+</Card>

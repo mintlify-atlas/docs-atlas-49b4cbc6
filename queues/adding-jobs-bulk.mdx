@@ -1,0 +1,275 @@
+---
+title: 'Adding Jobs in Bulk'
+description: 'Add multiple jobs to a BullMQ queue atomically for better performance'
+---
+
+When you need to add many jobs at once, using `addBulk` is more efficient than adding them one by one. This method reduces the number of roundtrips to Redis and ensures all jobs are added atomically.
+
+## Method Signature
+
+```typescript
+async addBulk(
+  jobs: { name: string; data: T; opts?: BulkJobOptions }[]
+): Promise<Job[]>
+```
+
+<ParamField path="jobs" type="array" required>
+  An array of job definitions. Each job is defined by three properties: `name`, `data`, and `opts`. They follow the same signature as `Queue.add`.
+</ParamField>
+
+## Basic Usage
+
+<CodeGroup>
+```typescript TypeScript
+import { Queue } from 'bullmq';
+
+const queue = new Queue('paint');
+
+const jobs = await queue.addBulk([
+  { name: 'paint', data: { color: 'red' } },
+  { name: 'paint', data: { color: 'blue' } },
+  { name: 'paint', data: { color: 'green' } },
+]);
+
+console.log(`Added ${jobs.length} jobs`);
+```
+
+```javascript JavaScript
+const { Queue } = require('bullmq');
+
+const queue = new Queue('paint');
+
+const jobs = await queue.addBulk([
+  { name: 'paint', data: { color: 'red' } },
+  { name: 'paint', data: { color: 'blue' } },
+  { name: 'paint', data: { color: 'green' } },
+]);
+
+console.log(`Added ${jobs.length} jobs`);
+```
+</CodeGroup>
+
+## Adding Jobs with Options
+
+Each job in the bulk array can have its own options, just like when using `add`:
+
+<CodeGroup>
+```typescript TypeScript
+import { Queue } from 'bullmq';
+
+const queue = new Queue('notifications');
+
+const jobs = await queue.addBulk([
+  {
+    name: 'send-email',
+    data: { to: 'user1@example.com', subject: 'Welcome!' },
+    opts: {
+      priority: 1,
+      attempts: 3,
+      removeOnComplete: true
+    }
+  },
+  {
+    name: 'send-email',
+    data: { to: 'user2@example.com', subject: 'Welcome!' },
+    opts: {
+      priority: 2,
+      delay: 5000 // Delay by 5 seconds
+    }
+  },
+  {
+    name: 'send-sms',
+    data: { to: '+1234567890', message: 'Hello!' },
+    opts: {
+      attempts: 5,
+      backoff: {
+        type: 'exponential',
+        delay: 1000
+      }
+    }
+  }
+]);
+```
+
+```javascript JavaScript
+const { Queue } = require('bullmq');
+
+const queue = new Queue('notifications');
+
+const jobs = await queue.addBulk([
+  {
+    name: 'send-email',
+    data: { to: 'user1@example.com', subject: 'Welcome!' },
+    opts: {
+      priority: 1,
+      attempts: 3,
+      removeOnComplete: true
+    }
+  },
+  {
+    name: 'send-email',
+    data: { to: 'user2@example.com', subject: 'Welcome!' },
+    opts: {
+      priority: 2,
+      delay: 5000 // Delay by 5 seconds
+    }
+  },
+  {
+    name: 'send-sms',
+    data: { to: '+1234567890', message: 'Hello!' },
+    opts: {
+      attempts: 5,
+      backoff: {
+        type: 'exponential',
+        delay: 1000
+      }
+    }
+  }
+]);
+```
+</CodeGroup>
+
+## Job Options
+
+The `opts` field for each job in the bulk array supports all the same options as the regular `add` method, **except** for the `repeat` option:
+
+<ParamField path="opts.delay" type="number">
+  Delay in milliseconds before the job can be processed
+</ParamField>
+
+<ParamField path="opts.priority" type="number">
+  Job priority (0 is highest priority)
+</ParamField>
+
+<ParamField path="opts.attempts" type="number">
+  Number of retry attempts
+</ParamField>
+
+<ParamField path="opts.backoff" type="number | BackoffOptions">
+  Backoff settings for retries
+</ParamField>
+
+<ParamField path="opts.lifo" type="boolean">
+  Add to right of queue (LIFO) instead of left (FIFO)
+</ParamField>
+
+<ParamField path="opts.removeOnComplete" type="boolean | number | KeepJobs">
+  Auto-remove job on completion
+</ParamField>
+
+<ParamField path="opts.removeOnFail" type="boolean | number | KeepJobs">
+  Auto-remove job on failure
+</ParamField>
+
+<ParamField path="opts.jobId" type="string">
+  Custom job ID (must be unique)
+</ParamField>
+
+<ParamField path="opts.parent" type="ParentOptions">
+  Parent job options for flows
+</ParamField>
+
+<Warning>
+  The `repeat` option is **not available** in `addBulk`. For repeatable jobs, use the regular `add` method or `upsertJobScheduler`.
+</Warning>
+
+## Atomicity
+
+The `addBulk` operation is atomic, meaning it will either succeed and add all jobs, or fail and add none of them:
+
+```typescript
+try {
+  const jobs = await queue.addBulk([
+    { name: 'job1', data: { value: 1 } },
+    { name: 'job2', data: { value: 2 } },
+    { name: 'job3', data: { value: 3 } },
+  ]);
+  console.log('All jobs added successfully');
+} catch (error) {
+  console.error('Failed to add jobs, none were added:', error);
+}
+```
+
+## Performance Benefits
+
+Using `addBulk` provides significant performance improvements when adding multiple jobs:
+
+- **Reduced Network Roundtrips**: One network call instead of many
+- **Atomic Operation**: All-or-nothing guarantees
+- **Better Throughput**: Can add thousands of jobs quickly
+
+### Example: Adding Many Jobs
+
+```typescript
+import { Queue } from 'bullmq';
+
+const queue = new Queue('data-processing');
+
+// Generate 1000 jobs
+const jobsToAdd = Array.from({ length: 1000 }, (_, i) => ({
+  name: 'process-record',
+  data: { recordId: i },
+  opts: {
+    removeOnComplete: true,
+    attempts: 3
+  }
+}));
+
+// Add all jobs in one call
+const jobs = await queue.addBulk(jobsToAdd);
+console.log(`Added ${jobs.length} jobs`);
+```
+
+## Practical Example: Batch Notifications
+
+```typescript
+import { Queue } from 'bullmq';
+
+const queue = new Queue('notifications');
+
+interface User {
+  email: string;
+  name: string;
+}
+
+async function sendBulkWelcomeEmails(users: User[]) {
+  const jobs = users.map(user => ({
+    name: 'welcome-email',
+    data: {
+      email: user.email,
+      name: user.name,
+      template: 'welcome'
+    },
+    opts: {
+      attempts: 3,
+      backoff: {
+        type: 'exponential' as const,
+        delay: 2000
+      },
+      removeOnComplete: {
+        age: 3600,
+        count: 1000
+      }
+    }
+  }));
+
+  const addedJobs = await queue.addBulk(jobs);
+  return addedJobs;
+}
+
+// Use it
+const newUsers = [
+  { email: 'user1@example.com', name: 'Alice' },
+  { email: 'user2@example.com', name: 'Bob' },
+  { email: 'user3@example.com', name: 'Charlie' }
+];
+
+const jobs = await sendBulkWelcomeEmails(newUsers);
+console.log(`Queued ${jobs.length} welcome emails`);
+```
+
+## Related
+
+- [Adding Jobs](/queues/adding-jobs)
+- [Auto Removal](/queues/auto-removal)
+- [Queue API Reference](https://api.docs.bullmq.io/classes/v5.Queue.html#addbulk)

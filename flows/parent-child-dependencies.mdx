@@ -1,0 +1,335 @@
+---
+title: 'Parent-Child Dependencies'
+description: 'Understand and manage complex parent-child job relationships'
+---
+
+BullMQ's flow system is built on parent-child dependencies. Understanding how these dependencies work is crucial for building complex workflows.
+
+## How Dependencies Work
+
+In BullMQ flows, a parent job will not be processed until all of its children have completed successfully. This creates a dependency tree where:
+
+- **Children** are processed first
+- **Parents** wait in the "waiting-children" state
+- **Parent processing** begins only after all children complete
+
+## Dependency States
+
+Jobs in a flow can have dependencies in different states:
+
+<CardGroup cols={2}>
+  <Card title="Processed" icon="circle-check" color="#00cc88">
+    Children that have completed successfully
+  </Card>
+  <Card title="Unprocessed" icon="circle" color="#888888">
+    Children that are waiting or in progress
+  </Card>
+  <Card title="Failed" icon="circle-xmark" color="#ff4444">
+    Children that have failed during processing
+  </Card>
+  <Card title="Ignored" icon="circle-minus" color="#ffaa00">
+    Failed children that are ignored by parent
+  </Card>
+</CardGroup>
+
+## Managing Dependencies
+
+### Get Dependencies
+
+Retrieve all dependencies of a parent job:
+
+```typescript
+const dependencies = await job.getDependencies();
+```
+
+Get specific types of dependencies with pagination:
+
+```typescript
+const { processed, nextProcessedCursor } = await job.getDependencies({
+  processed: {
+    count: 5,
+    cursor: 0,
+  },
+});
+
+const { unprocessed, nextUnprocessedCursor } = await job.getDependencies({
+  unprocessed: {
+    count: 5,
+    cursor: 0,
+  },
+});
+
+const { failed, nextFailedCursor } = await job.getDependencies({
+  failed: {
+    count: 5,
+    cursor: 0,
+  },
+});
+
+const { ignored, nextIgnoredCursor } = await job.getDependencies({
+  ignored: {
+    count: 5,
+    cursor: 0,
+  },
+});
+```
+
+### Get Dependencies Count
+
+Get counts of dependencies by state:
+
+```typescript
+const { failed, ignored, processed, unprocessed } =
+  await job.getDependenciesCount();
+```
+
+Or retrieve specific counts:
+
+```typescript
+const { failed } = await job.getDependenciesCount({
+  failed: true,
+});
+
+const { ignored, processed } = await job.getDependenciesCount({
+  ignored: true,
+  processed: true,
+});
+```
+
+### Get Children Values
+
+Access the return values from all child jobs:
+
+```typescript
+const childrenValues = await job.getChildrenValues();
+// Returns: { 'child-job-id-1': result1, 'child-job-id-2': result2, ... }
+```
+
+## Parent Options
+
+When creating child jobs, you can specify how they relate to their parent:
+
+```typescript
+interface ParentOptions {
+  id: string;
+  queue: string;
+}
+```
+
+Children automatically inherit the parent relationship:
+
+```typescript
+const flow = await flowProducer.add({
+  name: 'parent-job',
+  queueName: 'parent-queue',
+  data: {},
+  children: [
+    {
+      name: 'child-job',
+      queueName: 'child-queue',
+      data: {},
+      // Parent relationship is automatically set
+    },
+  ],
+});
+```
+
+## Accessing Parent Information
+
+Child jobs have access to their parent information:
+
+```typescript
+// Get the parent key
+const parentKey = job.parentKey;
+// Format: "bull:parent-queue:parent-job-id"
+
+// Parse parent information
+if (parentKey) {
+  const [prefix, queueName, jobId] = parentKey.split(':');
+  console.log(`Parent Queue: ${queueName}, Parent ID: ${jobId}`);
+}
+```
+
+## Checking Parent State
+
+Parent jobs waiting for children have a special state:
+
+```typescript
+const state = await parentJob.getState();
+if (state === 'waiting-children') {
+  console.log('Parent is waiting for children to complete');
+}
+```
+
+## Complex Dependency Patterns
+
+### Serial Execution
+
+Create a chain where jobs execute one after another:
+
+```typescript
+const chain = await flowProducer.add({
+  name: 'step-3',
+  queueName: 'processing',
+  data: { step: 3 },
+  children: [
+    {
+      name: 'step-2',
+      queueName: 'processing',
+      data: { step: 2 },
+      children: [
+        {
+          name: 'step-1',
+          queueName: 'processing',
+          data: { step: 1 },
+        },
+      ],
+    },
+  ],
+});
+// Execution order: step-1 → step-2 → step-3
+```
+
+### Parallel Execution with Aggregation
+
+Process multiple children in parallel, then aggregate results:
+
+```typescript
+const flow = await flowProducer.add({
+  name: 'aggregate-results',
+  queueName: 'aggregation',
+  data: {},
+  children: [
+    { name: 'task-1', queueName: 'processing', data: { id: 1 } },
+    { name: 'task-2', queueName: 'processing', data: { id: 2 } },
+    { name: 'task-3', queueName: 'processing', data: { id: 3 } },
+  ],
+});
+
+// In the parent worker:
+const worker = new Worker('aggregation', async job => {
+  const childrenValues = await job.getChildrenValues();
+  const results = Object.values(childrenValues);
+  return results.reduce((sum, val) => sum + val, 0);
+});
+```
+
+### Mixed Serial and Parallel
+
+Combine serial and parallel execution patterns:
+
+```typescript
+const flow = await flowProducer.add({
+  name: 'final-step',
+  queueName: 'final',
+  data: {},
+  children: [
+    {
+      name: 'parallel-aggregator',
+      queueName: 'aggregation',
+      data: {},
+      children: [
+        { name: 'parallel-1', queueName: 'processing', data: {} },
+        { name: 'parallel-2', queueName: 'processing', data: {} },
+        { name: 'parallel-3', queueName: 'processing', data: {} },
+      ],
+    },
+  ],
+});
+// parallel-1, parallel-2, parallel-3 run in parallel
+// → parallel-aggregator runs after all complete
+// → final-step runs last
+```
+
+## Dependency Failure Handling
+
+By default, if any child fails, the parent will not be processed. However, you can customize this behavior:
+
+<CardGroup cols={2}>
+  <Card title="Remove Dependency" icon="trash" href="/flows/remove-dependency">
+    Remove failed child from parent dependencies
+  </Card>
+  <Card title="Ignore Dependency" icon="eye-slash" href="/flows/ignore-dependency">
+    Ignore failed child but keep dependency
+  </Card>
+  <Card title="Fail Parent" icon="circle-xmark" href="/flows/fail-parent">
+    Make parent fail when child fails
+  </Card>
+  <Card title="Continue Parent" icon="forward" href="/flows/continue-parent">
+    Process parent immediately on child failure
+  </Card>
+</CardGroup>
+
+## Example: Multi-Stage Processing
+
+Here's a complete example of a multi-stage data processing workflow:
+
+```typescript
+import { FlowProducer, Worker, Queue } from 'bullmq';
+
+const flowProducer = new FlowProducer({ connection });
+
+// Create a flow for processing a dataset
+const flow = await flowProducer.add({
+  name: 'generate-report',
+  queueName: 'reporting',
+  data: { datasetId: 'dataset-123' },
+  children: [
+    {
+      name: 'process-batch',
+      queueName: 'processing',
+      data: { batch: 1 },
+      children: [
+        { name: 'fetch-data', queueName: 'fetching', data: { batch: 1 } },
+        { name: 'validate-data', queueName: 'validation', data: { batch: 1 } },
+      ],
+    },
+    {
+      name: 'process-batch',
+      queueName: 'processing',
+      data: { batch: 2 },
+      children: [
+        { name: 'fetch-data', queueName: 'fetching', data: { batch: 2 } },
+        { name: 'validate-data', queueName: 'validation', data: { batch: 2 } },
+      ],
+    },
+  ],
+});
+
+// Worker for processing batches
+const processingWorker = new Worker('processing', async job => {
+  const childrenValues = await job.getChildrenValues();
+  const fetchResult = Object.values(childrenValues)[0];
+  const validationResult = Object.values(childrenValues)[1];
+  
+  return {
+    batch: job.data.batch,
+    recordsProcessed: fetchResult.count,
+    validationPassed: validationResult.success,
+  };
+});
+
+// Worker for generating final report
+const reportingWorker = new Worker('reporting', async job => {
+  const childrenValues = await job.getChildrenValues();
+  const batchResults = Object.values(childrenValues);
+  
+  const totalRecords = batchResults.reduce(
+    (sum, batch) => sum + batch.recordsProcessed,
+    0
+  );
+  
+  return {
+    datasetId: job.data.datasetId,
+    totalRecords,
+    batchesProcessed: batchResults.length,
+  };
+});
+```
+
+## API Reference
+
+- [Get Dependencies API Reference](https://api.docs.bullmq.io/classes/v5.Job.html#getdependencies)
+- [Get Dependencies Count API Reference](https://api.docs.bullmq.io/classes/v5.Job.html#getdependenciescount)
+- [Get Children Values API Reference](https://api.docs.bullmq.io/classes/v5.Job.html#getchildrenvalues)
+- [Job API Reference](https://api.docs.bullmq.io/classes/v5.Job.html)

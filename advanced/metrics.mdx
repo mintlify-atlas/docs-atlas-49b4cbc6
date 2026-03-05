@@ -1,0 +1,439 @@
+---
+title: 'Metrics'
+description: 'Track queue performance with built-in metrics gathering'
+---
+
+BullMQ provides built-in metrics functionality that allows you to track the performance of your queues over time. Workers can count the number of jobs they process per minute and store this data in Redis for later analysis.
+
+## Enabling Metrics
+
+Enable metrics collection on your workers by specifying how many data points to keep:
+
+```typescript
+import { Worker, MetricsTime } from 'bullmq';
+
+const worker = new Worker('tasks', async job => {
+  return await processJob(job);
+}, {
+  connection: {
+    host: 'localhost',
+    port: 6379,
+  },
+  metrics: {
+    maxDataPoints: MetricsTime.ONE_WEEK * 2,
+  },
+});
+```
+
+<ParamField path="metrics.maxDataPoints" type="number" required>
+  Number of data points (minutes) to store. Each data point represents one minute of metrics.
+</ParamField>
+
+<Warning>
+  All workers for the same queue must use the same metrics settings to get consistent data.
+</Warning>
+
+## MetricsTime Constants
+
+BullMQ provides convenient time constants:
+
+```typescript
+import { MetricsTime } from 'bullmq';
+
+// Available constants
+MetricsTime.ONE_SECOND    // 1 data point
+MetricsTime.ONE_MINUTE    // 1 data point
+MetricsTime.ONE_HOUR      // 60 data points
+MetricsTime.ONE_DAY       // 1,440 data points
+MetricsTime.ONE_WEEK      // 10,080 data points
+MetricsTime.TWO_WEEKS     // 20,160 data points
+MetricsTime.ONE_MONTH     // ~43,200 data points
+```
+
+### Common Configurations
+
+```typescript
+// Keep 1 hour of metrics
+metrics: { maxDataPoints: MetricsTime.ONE_HOUR }
+
+// Keep 1 day of metrics
+metrics: { maxDataPoints: MetricsTime.ONE_DAY }
+
+// Keep 2 weeks of metrics (recommended)
+metrics: { maxDataPoints: MetricsTime.ONE_WEEK * 2 }
+
+// Keep 1 month of metrics
+metrics: { maxDataPoints: MetricsTime.ONE_MONTH }
+```
+
+## Memory Usage
+
+Metrics are stored efficiently in Redis:
+
+- **Data points are 1-minute intervals**
+- **2 weeks of data ≈ 120 KB per queue**
+- **Older data is automatically removed**
+- **Memory usage remains constant** after reaching max data points
+
+```typescript
+// Example: 2 weeks of metrics
+// 2 weeks = 14 days = 20,160 minutes = 20,160 data points
+// Approximate memory: 120 KB
+const worker = new Worker('tasks', processor, {
+  metrics: {
+    maxDataPoints: MetricsTime.ONE_WEEK * 2, // ~120 KB
+  },
+});
+```
+
+## Querying Metrics
+
+Retrieve metrics using the `getMetrics` method on the Queue class:
+
+```typescript
+import { Queue, MetricsTime } from 'bullmq';
+
+const queue = new Queue('tasks', {
+  connection: {
+    host: 'localhost',
+    port: 6379,
+  },
+});
+
+// Get completed job metrics for the last 2 weeks
+const completedMetrics = await queue.getMetrics(
+  'completed',
+  0,
+  MetricsTime.ONE_WEEK * 2
+);
+
+// Get failed job metrics for the last 24 hours
+const failedMetrics = await queue.getMetrics(
+  'failed',
+  0,
+  MetricsTime.ONE_DAY
+);
+```
+
+### Method Signature
+
+```typescript
+async getMetrics(
+  type: 'completed' | 'failed',
+  start?: number,  // Default: 0
+  end?: number     // Default: -1 (all data)
+): Promise<Metrics>
+```
+
+<ParamField path="type" type="'completed' | 'failed'" required>
+  The type of metrics to retrieve: `completed` for successful jobs or `failed` for failed jobs.
+</ParamField>
+
+<ParamField path="start" type="number" default="0">
+  Starting index for pagination. Use `0` to start from the beginning.
+</ParamField>
+
+<ParamField path="end" type="number" default="-1">
+  Ending index for pagination. Use `-1` to retrieve all data.
+</ParamField>
+
+## Metrics Response Format
+
+The `getMetrics` method returns a `Metrics` object:
+
+```typescript
+interface Metrics {
+  data: number[];  // Array of job counts per minute
+  count: number;   // Total count since queue started
+  meta: {
+    count: number;      // Same as count above
+    prevTS: number;     // Internal use - previous timestamp
+    prevCount: number;  // Internal use - previous count
+  };
+}
+```
+
+### Example Response
+
+```typescript
+const metrics = await queue.getMetrics('completed', 0, 60);
+
+console.log(metrics);
+// Output:
+// {
+//   data: [5, 8, 3, 12, 7, 9, 11, ...], // Jobs per minute
+//   count: 15284,                        // Total jobs completed
+//   meta: {
+//     count: 15284,
+//     prevTS: 1678901234567,
+//     prevCount: 15279
+//   }
+// }
+```
+
+### Understanding the Data
+
+**`data` array:**
+- Each element represents one minute
+- Value is the number of jobs completed (or failed) in that minute
+- Ordered from oldest to newest
+
+**`count` field:**
+- Total number of jobs completed (or failed) since the queue started
+- **Not limited to the queried time range**
+- Useful for long-term tracking
+
+**`meta` fields:**
+- Used internally by the metrics system
+- `prevTS` and `prevCount` should not be used in application code
+
+## Practical Examples
+
+### Example 1: Basic Metrics Tracking
+
+```typescript
+import { Queue, Worker, MetricsTime } from 'bullmq';
+
+// Enable metrics on worker
+const worker = new Worker('email', async job => {
+  await sendEmail(job.data);
+}, {
+  metrics: {
+    maxDataPoints: MetricsTime.ONE_DAY,
+  },
+});
+
+// Query metrics
+const queue = new Queue('email');
+
+setInterval(async () => {
+  const metrics = await queue.getMetrics('completed', 0, 60);
+  
+  // Calculate jobs per hour
+  const jobsLastHour = metrics.data.reduce((sum, count) => sum + count, 0);
+  
+  console.log(`Jobs completed in last hour: ${jobsLastHour}`);
+  console.log(`Total jobs completed: ${metrics.count}`);
+}, 60000); // Check every minute
+```
+
+### Example 2: Performance Dashboard
+
+```typescript
+import { Queue, MetricsTime } from 'bullmq';
+
+const queue = new Queue('tasks');
+
+async function getDashboardStats() {
+  const completed = await queue.getMetrics('completed', 0, MetricsTime.ONE_HOUR);
+  const failed = await queue.getMetrics('failed', 0, MetricsTime.ONE_HOUR);
+  
+  const completedLastHour = completed.data.reduce((sum, n) => sum + n, 0);
+  const failedLastHour = failed.data.reduce((sum, n) => sum + n, 0);
+  
+  const totalProcessed = completedLastHour + failedLastHour;
+  const successRate = totalProcessed > 0 
+    ? (completedLastHour / totalProcessed * 100).toFixed(2)
+    : 0;
+  
+  return {
+    completedLastHour,
+    failedLastHour,
+    totalProcessed,
+    successRate: `${successRate}%`,
+    allTimeCompleted: completed.count,
+    allTimeFailed: failed.count,
+  };
+}
+
+// Display dashboard every 5 minutes
+setInterval(async () => {
+  const stats = await getDashboardStats();
+  console.log('=== Queue Dashboard ===');
+  console.log(`Completed (1h): ${stats.completedLastHour}`);
+  console.log(`Failed (1h): ${stats.failedLastHour}`);
+  console.log(`Success Rate: ${stats.successRate}`);
+  console.log(`All-time: ${stats.allTimeCompleted} completed, ${stats.allTimeFailed} failed`);
+}, 300000);
+```
+
+### Example 3: Alerting on Failures
+
+```typescript
+import { Queue, MetricsTime } from 'bullmq';
+
+const queue = new Queue('critical-tasks');
+
+async function checkFailureRate() {
+  const failed = await queue.getMetrics('failed', 0, 30); // Last 30 minutes
+  const completed = await queue.getMetrics('completed', 0, 30);
+  
+  const recentFailed = failed.data.reduce((sum, n) => sum + n, 0);
+  const recentCompleted = completed.data.reduce((sum, n) => sum + n, 0);
+  const total = recentFailed + recentCompleted;
+  
+  if (total > 0) {
+    const failureRate = (recentFailed / total) * 100;
+    
+    if (failureRate > 10) {
+      console.error(`⚠️ HIGH FAILURE RATE: ${failureRate.toFixed(2)}%`);
+      console.error(`Failed: ${recentFailed}, Completed: ${recentCompleted}`);
+      
+      // Send alert
+      await alerting.send({
+        level: 'warning',
+        message: `Queue failure rate is ${failureRate.toFixed(2)}%`,
+        details: { recentFailed, recentCompleted },
+      });
+    }
+  }
+}
+
+// Check every 5 minutes
+setInterval(checkFailureRate, 300000);
+```
+
+### Example 4: Paginated Metrics
+
+```typescript
+import { Queue } from 'bullmq';
+
+const queue = new Queue('tasks');
+
+// Get first 60 minutes (1 hour)
+const page1 = await queue.getMetrics('completed', 0, 60);
+console.log('First hour:', page1.data);
+
+// Get next 60 minutes (2nd hour)
+const page2 = await queue.getMetrics('completed', 60, 120);
+console.log('Second hour:', page2.data);
+
+// Get last 60 minutes using negative index
+const lastHour = await queue.getMetrics('completed', -60, -1);
+console.log('Last hour:', lastHour.data);
+```
+
+### Example 5: Calculating Throughput
+
+```typescript
+import { Queue, MetricsTime } from 'bullmq';
+
+const queue = new Queue('tasks');
+
+async function calculateThroughput() {
+  const metrics = await queue.getMetrics('completed', 0, MetricsTime.ONE_DAY);
+  
+  // Jobs per minute (last hour)
+  const lastHourData = metrics.data.slice(-60);
+  const avgPerMinute = lastHourData.reduce((sum, n) => sum + n, 0) / 60;
+  
+  // Jobs per hour (last day)
+  const hoursInDay = 24;
+  const totalLastDay = metrics.data.reduce((sum, n) => sum + n, 0);
+  const avgPerHour = totalLastDay / hoursInDay;
+  
+  return {
+    perMinute: avgPerMinute.toFixed(2),
+    perHour: avgPerHour.toFixed(2),
+    perDay: totalLastDay,
+  };
+}
+
+const throughput = await calculateThroughput();
+console.log('Average throughput:');
+console.log(`  ${throughput.perMinute} jobs/minute`);
+console.log(`  ${throughput.perHour} jobs/hour`);
+console.log(`  ${throughput.perDay} jobs/day`);
+```
+
+## Prometheus Integration
+
+For Prometheus metrics export, see [Prometheus](/advanced/prometheus) documentation.
+
+```typescript
+import http from 'http';
+import { Queue } from 'bullmq';
+
+const queue = new Queue('tasks');
+
+const server = http.createServer(async (req, res) => {
+  if (req.url === '/metrics' && req.method === 'GET') {
+    // Export Prometheus metrics
+    const metrics = await queue.exportPrometheusMetrics();
+    
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end(metrics);
+  } else {
+    res.writeHead(404);
+    res.end('Not Found');
+  }
+});
+
+server.listen(3000);
+console.log('Prometheus metrics available at http://localhost:3000/metrics');
+```
+
+## Best Practices
+
+<Steps>
+  <Step title="Use consistent settings across workers">
+    All workers for the same queue must have identical metrics configuration.
+  </Step>
+  
+  <Step title="Start with 2 weeks of data">
+    This provides good balance between memory usage (~120 KB) and historical data.
+  </Step>
+  
+  <Step title="Monitor both completed and failed metrics">
+    Track success rate by comparing completed vs failed job counts.
+  </Step>
+  
+  <Step title="Set up alerts for anomalies">
+    Monitor failure rates, throughput drops, or unusual patterns.
+  </Step>
+  
+  <Step title="Use pagination for large datasets">
+    When querying long time ranges, use pagination to avoid loading too much data.
+  </Step>
+  
+  <Step title="Combine with external monitoring">
+    Integrate with Prometheus, Grafana, or other monitoring tools for visualization.
+  </Step>
+</Steps>
+
+## Limitations
+
+<Warning>
+  Metrics are aggregated in **1-minute intervals**. You cannot get sub-minute granularity.
+</Warning>
+
+<Warning>
+  The `count` field shows **all-time totals**, not just the queried time range.
+</Warning>
+
+<Info>
+  Metrics data is stored in Redis and will be lost if Redis is flushed or data is not persisted.
+</Info>
+
+## Related Topics
+
+<CardGroup cols={2}>
+  <Card title="Telemetry" icon="chart-line" href="/advanced/telemetry">
+    OpenTelemetry integration for tracing
+  </Card>
+  <Card title="Queue Events" icon="bolt" href="/api/queue-events">
+    Listen to job events in real-time
+  </Card>
+  <Card title="Workers Overview" icon="gear" href="/workers/overview">
+    Configure and manage workers
+  </Card>
+  <Card title="Going to Production" icon="rocket" href="/operations/going-to-production">
+    Production deployment best practices
+  </Card>
+</CardGroup>
+
+## API Reference
+
+- [Queue.getMetrics API Reference](https://api.docs.bullmq.io/classes/v5.Queue.html#getmetrics)
+- [WorkerOptions.metrics](https://api.docs.bullmq.io/interfaces/v5.WorkerOptions.html#metrics)
+- [MetricsTime Reference](https://api.docs.bullmq.io/enums/v5.MetricsTime.html)

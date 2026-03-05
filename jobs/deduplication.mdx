@@ -1,0 +1,329 @@
+---
+title: "Deduplication"
+description: "Prevent duplicate job execution with deduplication strategies"
+---
+
+## Overview
+
+Deduplication in BullMQ delays and deduplicates job execution based on specific identifiers. Within a specified period, or until a job completes or fails, no new jobs with the same identifier will be added to the queue. Instead, these attempts trigger a `deduplicated` event.
+
+From `src/classes/job.ts:160`:
+
+```typescript
+export class Job {
+  /**
+   * Debounce identifier.
+   * @deprecated use deduplicationId
+   */
+  debounceId?: string;
+
+  /**
+   * Deduplication identifier.
+   */
+  deduplicationId?: string;
+}
+```
+
+## Simple Mode
+
+Simple Mode extends deduplication until the job's completion or failure. While a job remains incomplete, subsequent jobs with the same deduplication ID are ignored.
+
+```typescript
+import { Queue } from 'bullmq';
+
+const myQueue = new Queue('Paint');
+
+// Add a job that will be deduplicated until it completes or fails
+await myQueue.add(
+  'house',
+  { color: 'white' },
+  { deduplication: { id: 'customValue' } },
+);
+```
+
+While this job is not in completed or failed state, subsequent jobs with the same deduplication ID will be ignored, and a `deduplicated` event will be emitted.
+
+<Info>
+Simple Mode is useful for long-running jobs or critical updates that must not be duplicated until resolved, such as processing a file upload.
+</Info>
+
+## Throttle Mode
+
+Throttle Mode assigns a TTL (Time to Live) to a job. If a similar job is added during this TTL period, it's ignored, preventing queue overload.
+
+```typescript
+import { Queue } from 'bullmq';
+
+const myQueue = new Queue('Paint');
+
+// Add a job that will be deduplicated for 5 seconds
+await myQueue.add(
+  'house',
+  { color: 'white' },
+  { deduplication: { id: 'customValue', ttl: 5000 } },
+);
+```
+
+After adding this job, any subsequent job with the same deduplication ID `customValue` added within 5 seconds will be ignored.
+
+From `src/types/deduplication-options.ts`:
+
+```typescript
+/**
+ * Deduplication options
+ */
+export type DeduplicationOptions = {
+  /**
+   * Identifier
+   */
+  id: string;
+} & {
+  /**
+   * ttl in milliseconds
+   */
+  ttl?: number;
+
+  /**
+   * Extend ttl value
+   */
+  extend?: boolean;
+
+  /**
+   * replace job record while it's in delayed state
+   */
+  replace?: boolean;
+};
+```
+
+<Info>
+Throttle Mode is useful for scenarios with rapid, repetitive requests, such as multiple users triggering the same job.
+</Info>
+
+## Debounce Mode
+
+Debounce Mode delays a job and replaces it with newer versions during the delay period. Only the most recent job is kept and processed.
+
+```typescript
+import { Queue, Worker } from 'bullmq';
+
+const myQueue = new Queue('Paint');
+
+const worker = new Worker('Paint', async () => {});
+
+worker.once('completed', job => {
+  // Only one instance is completed and 9 additions were ignored
+  console.log(job.data.color); // `white 10`
+});
+
+// Add 10 jobs with deduplication option in debounce mode
+for (let i = 1; i < 11; i++) {
+  await myQueue.add(
+    'house1',
+    { color: `white ${i}` },
+    {
+      deduplication: {
+        id: 'customValue',
+        ttl: 5000,
+        extend: true,
+        replace: true,
+      },
+      delay: 5000,
+    },
+  );
+}
+```
+
+With debounce mode:
+- Each new job with the same deduplication ID **replaces** the previous job
+- The TTL is **reset** with each addition
+- Only the **last** job data is processed
+
+<Info>
+Debounce Mode is useful when you need the latest data, such as saving user input where only the final state matters.
+</Info>
+
+<Note>
+You must provide a deduplication ID that represents your job. You can hash your entire job data or a subset of attributes to create this identifier.
+</Note>
+
+<Warning>
+Manual deletion (e.g., calling `job.remove()`) will disable the deduplication.
+</Warning>
+
+## The Deduplicated Event
+
+The `deduplicated` event is emitted whenever a job is deduplicated (ignored or replaced) in any mode.
+
+```typescript
+import { QueueEvents } from 'bullmq';
+
+const queueEvents = new QueueEvents('myQueue');
+
+queueEvents.on(
+  'deduplicated',
+  ({ jobId, deduplicationId, deduplicatedJobId }, id) => {
+    console.log(
+      `Job ${deduplicatedJobId} was deduplicated due to existing job ${jobId} ` +
+      `with deduplication ID ${deduplicationId}`
+    );
+  },
+);
+```
+
+Event parameters:
+- `jobId`: The ID of the job retained in the queue
+- `deduplicationId`: The deduplication ID that caused the deduplication
+- `deduplicatedJobId`: The ID of the job that was deduplicated (ignored or replaced)
+
+## Get Deduplication Job Id
+
+Retrieve the ID of the job that started the deduplicated state:
+
+```typescript
+const jobId = await myQueue.getDeduplicationJobId('customValue');
+```
+
+## Remove Deduplication Key
+
+Stop deduplication before TTL finishes or before a job completes:
+
+### Remove by Queue
+
+```typescript
+await myQueue.removeDeduplicationKey('customValue');
+```
+
+### Remove by Job
+
+Only removes if this specific job caused the deduplication:
+
+```typescript
+const isDeduplicatedKeyRemoved = await job.removeDeduplicationKey();
+```
+
+From `src/classes/job.ts:1538`:
+
+```typescript
+/**
+ * Removes a deduplication key if job is still the cause of deduplication.
+ * @returns true if the deduplication key was removed.
+ */
+async removeDeduplicationKey(): Promise<boolean> {
+  if (this.deduplicationId) {
+    const result = await this.scripts.removeDeduplicationKey(
+      this.deduplicationId,
+      this.id,
+    );
+    return result > 0;
+  }
+  return false;
+}
+```
+
+## Validation
+
+From `src/classes/job.ts:1607`:
+
+```typescript
+if (this.opts.deduplication) {
+  if (!this.opts.deduplication?.id) {
+    throw new Error('Deduplication id must be provided');
+  }
+}
+```
+
+<Warning>
+The deduplication ID is required when using deduplication options.
+</Warning>
+
+## Comparison Table
+
+| Mode | TTL | Replace | Extend | Use Case |
+|------|-----|---------|--------|----------|
+| **Simple** | ❌ | ❌ | ❌ | Prevent duplicates until job completes |
+| **Throttle** | ✅ | ❌ | ❌ | Rate limiting, ignore rapid duplicates |
+| **Debounce** | ✅ | ✅ | ✅ | Keep only latest data, discard intermediate updates |
+
+## Use Cases
+
+<AccordionGroup>
+
+<Accordion title="Email Notifications (Simple Mode)">
+  Prevent duplicate password reset emails:
+  
+  ```typescript
+  const userId = '12345';
+  await emailQueue.add(
+    'passwordReset',
+    { userId, email: user.email },
+    {
+      deduplication: { id: `pwd-reset-${userId}` }
+    }
+  );
+  ```
+</Accordion>
+
+<Accordion title="API Rate Limiting (Throttle Mode)">
+  Prevent API spam by throttling requests:
+  
+  ```typescript
+  await apiQueue.add(
+    'fetchData',
+    { endpoint: '/users' },
+    {
+      deduplication: {
+        id: 'fetch-users',
+        ttl: 60000, // 1 minute
+      }
+    }
+  );
+  ```
+</Accordion>
+
+<Accordion title="Auto-save (Debounce Mode)">
+  Save only the final state of user edits:
+  
+  ```typescript
+  // User is typing...
+  for (let i = 0; i < keystrokes.length; i++) {
+    await saveQueue.add(
+      'autoSave',
+      { documentId: '123', content: currentContent },
+      {
+        deduplication: {
+          id: 'autosave-doc-123',
+          ttl: 3000,
+          extend: true,
+          replace: true,
+        },
+        delay: 3000,
+      }
+    );
+  }
+  // Only the final content is saved after typing stops
+  ```
+</Accordion>
+
+</AccordionGroup>
+
+## Read More
+
+<CardGroup cols={2}>
+
+<Card title="Add Job API" icon="code" href="https://api.docs.bullmq.io/classes/v5.Queue.html#add">
+  View the Add Job API Reference
+</Card>
+
+<Card title="Queue Remove Key" icon="trash" href="https://api.docs.bullmq.io/classes/v5.Queue.html#removededuplicationkey">
+  Queue.removeDeduplicationKey API
+</Card>
+
+<Card title="Job Remove Key" icon="trash" href="https://api.docs.bullmq.io/classes/v5.Job.html#removededuplicationkey">
+  Job.removeDeduplicationKey API
+</Card>
+
+<Card title="Deduplication Patterns" icon="book" href="/patterns/deduplication">
+  Deduplication Patterns Guide
+</Card>
+
+</CardGroup>

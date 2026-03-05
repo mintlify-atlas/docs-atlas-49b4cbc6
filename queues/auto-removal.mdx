@@ -1,0 +1,296 @@
+---
+title: 'Auto-Removal of Jobs'
+description: 'Configure automatic removal of completed and failed jobs in BullMQ'
+---
+
+By default, when jobs complete or fail, BullMQ stores them in special sets ("completed" and "failed"). While this is useful for debugging and examining results, it can fill Redis with data over time. BullMQ provides several strategies to automatically remove finalized jobs.
+
+## Overview
+
+Auto-removal is configured using the `removeOnComplete` and `removeOnFail` options on individual jobs. These options can be set:
+
+- When adding a job via `queue.add()`
+- As default options on the queue instance
+- As default options on the worker instance
+
+<Info>
+  Auto-removal works **lazily**. Jobs are not removed immediately, but when a new job completes or fails, triggering the cleanup process.
+</Info>
+
+## Remove All Finalized Jobs
+
+The simplest option is to set `removeOnComplete` or `removeOnFail` to `true`. Jobs will be removed automatically as soon as they finalize:
+
+<CodeGroup>
+```typescript TypeScript
+import { Queue } from 'bullmq';
+
+const queue = new Queue('tasks');
+
+await queue.add(
+  'task',
+  { data: 'test' },
+  { 
+    removeOnComplete: true, 
+    removeOnFail: true 
+  }
+);
+```
+
+```javascript JavaScript
+const { Queue } = require('bullmq');
+
+const queue = new Queue('tasks');
+
+await queue.add(
+  'task',
+  { data: 'test' },
+  { 
+    removeOnComplete: true, 
+    removeOnFail: true 
+  }
+);
+```
+</CodeGroup>
+
+<Warning>
+  Jobs will be deleted regardless of their names when using `true`.
+</Warning>
+
+## Keep a Certain Number of Jobs
+
+Specify a maximum number of jobs to keep. A good practice is to keep a handful of completed jobs and a larger number of failed jobs for debugging:
+
+<CodeGroup>
+```typescript TypeScript
+await queue.add(
+  'task',
+  { data: 'test' },
+  { 
+    removeOnComplete: 1000,  // Keep last 1000 completed jobs
+    removeOnFail: 5000       // Keep last 5000 failed jobs
+  }
+);
+```
+
+```javascript JavaScript
+await queue.add(
+  'task',
+  { data: 'test' },
+  { 
+    removeOnComplete: 1000,  // Keep last 1000 completed jobs
+    removeOnFail: 5000       // Keep last 5000 failed jobs
+  }
+);
+```
+</CodeGroup>
+
+## Keep Jobs Based on Age
+
+Use the `KeepJobs` object to specify how long to keep jobs. You can combine age limits with count limits:
+
+### KeepJobs Options
+
+<ParamField path="age" type="number">
+  Maximum age in seconds for jobs to be kept
+</ParamField>
+
+<ParamField path="count" type="number">
+  Maximum count of jobs to be kept (used as a safeguard)
+</ParamField>
+
+<ParamField path="limit" type="number">
+  Maximum quantity of jobs to be removed per cleanup operation
+</ParamField>
+
+### Example: Age-Based Removal
+
+<CodeGroup>
+```typescript TypeScript
+await queue.add(
+  'task',
+  { data: 'test' },
+  {
+    removeOnComplete: {
+      age: 3600,    // Keep for up to 1 hour
+      count: 1000   // But never more than 1000 jobs
+    },
+    removeOnFail: {
+      age: 86400    // Keep failed jobs for up to 24 hours
+    }
+  }
+);
+```
+
+```javascript JavaScript
+await queue.add(
+  'task',
+  { data: 'test' },
+  {
+    removeOnComplete: {
+      age: 3600,    // Keep for up to 1 hour
+      count: 1000   // But never more than 1000 jobs
+    },
+    removeOnFail: {
+      age: 86400    // Keep failed jobs for up to 24 hours
+    }
+  }
+);
+```
+</CodeGroup>
+
+The `count` field acts as a safeguard: if you receive an unexpected burst of jobs, the count limit prevents memory issues by capping the total number of jobs kept.
+
+## Default Options on Queue
+
+Set default removal options for all jobs added to a queue:
+
+```typescript
+import { Queue } from 'bullmq';
+
+const queue = new Queue('tasks', {
+  defaultJobOptions: {
+    removeOnComplete: {
+      age: 3600,
+      count: 1000
+    },
+    removeOnFail: {
+      age: 86400,
+      count: 5000
+    }
+  }
+});
+
+// This job will inherit the default removal options
+await queue.add('task', { data: 'test' });
+
+// Override default options for specific jobs
+await queue.add('important-task', { data: 'test' }, {
+  removeOnComplete: false  // Keep this one
+});
+```
+
+## Default Options on Worker
+
+Workers can also define default removal options that override job-level settings:
+
+```typescript
+import { Worker } from 'bullmq';
+
+const worker = new Worker(
+  'tasks',
+  async job => {
+    // Process job
+  },
+  {
+    removeOnComplete: {
+      age: 3600,
+      count: 100
+    },
+    removeOnFail: {
+      age: 86400
+    }
+  }
+);
+```
+
+<Info>
+  Worker-level settings override job-level settings. This is useful for enforcing consistent retention policies across all jobs.
+</Info>
+
+## Idempotence Considerations
+
+One strategy for implementing idempotence with BullMQ is using unique job IDs. When you add a job with an ID that already exists, the new job is ignored and a `duplicated` event is triggered.
+
+<Warning>
+  When using auto-removal with unique job IDs, be aware that a removed job is no longer considered part of the queue. Future jobs with the same ID will **not** be treated as duplicates.
+</Warning>
+
+### Example: Idempotent Jobs with Auto-Removal
+
+```typescript
+// Add a job with a unique ID
+await queue.add(
+  'process-user',
+  { userId: 123 },
+  { 
+    jobId: 'user-123-sync',
+    removeOnComplete: false  // Keep to maintain idempotence
+  }
+);
+
+// Later, adding the same job ID will be ignored
+await queue.add(
+  'process-user',
+  { userId: 123 },
+  { jobId: 'user-123-sync' }
+);
+// This will trigger a 'duplicated' event
+```
+
+## Practical Examples
+
+### Example 1: High-Volume Queue
+
+For queues processing millions of jobs, aggressive cleanup is important:
+
+```typescript
+const queue = new Queue('high-volume', {
+  defaultJobOptions: {
+    removeOnComplete: true,     // Remove immediately
+    removeOnFail: {
+      age: 3600,                // Keep failures for 1 hour
+      count: 10000              // Max 10k failed jobs
+    }
+  }
+});
+```
+
+### Example 2: Critical Jobs
+
+For important jobs, keep results longer:
+
+```typescript
+const queue = new Queue('payments');
+
+await queue.add(
+  'process-payment',
+  { amount: 100, userId: 123 },
+  {
+    removeOnComplete: {
+      age: 2592000,  // 30 days
+      count: 100000
+    },
+    removeOnFail: false  // Never auto-remove failures
+  }
+);
+```
+
+### Example 3: Development vs Production
+
+```typescript
+const isProduction = process.env.NODE_ENV === 'production';
+
+const queue = new Queue('tasks', {
+  defaultJobOptions: {
+    removeOnComplete: isProduction 
+      ? { age: 3600, count: 1000 }
+      : false,  // Keep all in development
+    removeOnFail: isProduction
+      ? { age: 86400, count: 5000 }
+      : false   // Keep all in development
+  }
+});
+```
+
+## Manual Cleanup
+
+For manual cleanup operations, see the [clean](/queues/removing-jobs#clean) method.
+
+## Related
+
+- [Adding Jobs](/queues/adding-jobs)
+- [Removing Jobs](/queues/removing-jobs)
+- [Queue API Reference](https://api.docs.bullmq.io/classes/v5.Queue.html)
+- [KeepJobs API Reference](https://api.docs.bullmq.io/interfaces/v5.KeepJobs.html)
+- [Duplicated Event Reference](https://api.docs.bullmq.io/interfaces/v5.QueueEventsListener.html#duplicated)

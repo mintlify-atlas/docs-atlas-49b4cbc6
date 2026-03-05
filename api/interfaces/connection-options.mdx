@@ -1,0 +1,282 @@
+---
+title: 'ConnectionOptions'
+description: 'Redis connection configuration'
+---
+
+## Overview
+
+ConnectionOptions defines how BullMQ connects to Redis. You can provide either ioredis configuration options or an existing Redis client instance.
+
+## Type Definition
+
+```typescript
+type ConnectionOptions = RedisOptions | RedisClient;
+```
+
+## Using RedisOptions
+
+Provide ioredis configuration as an object:
+
+```typescript
+import { Queue } from 'bullmq';
+
+const queue = new Queue('myQueue', {
+  connection: {
+    host: 'localhost',
+    port: 6379,
+    password: 'mypassword',
+    db: 0,
+  },
+});
+```
+
+## Common RedisOptions Properties
+
+### host
+
+<ParamField path="host" type="string" default="'127.0.0.1'">
+  Redis server hostname
+</ParamField>
+
+### port
+
+<ParamField path="port" type="number" default="6379">
+  Redis server port
+</ParamField>
+
+### password
+
+<ParamField path="password" type="string">
+  Redis server password
+</ParamField>
+
+### db
+
+<ParamField path="db" type="number" default="0">
+  Redis database index
+</ParamField>
+
+### username
+
+<ParamField path="username" type="string">
+  Redis username (for Redis 6+ ACL)
+</ParamField>
+
+### tls
+
+<ParamField path="tls" type="object">
+  TLS/SSL configuration
+</ParamField>
+
+### maxRetriesPerRequest
+
+<ParamField path="maxRetriesPerRequest" type="number | null">
+  Maximum retry attempts per request. Must be `null` for Workers
+</ParamField>
+
+### retryStrategy
+
+<ParamField path="retryStrategy" type="function">
+  Function to determine retry delay
+</ParamField>
+
+## Examples
+
+### Basic Connection
+
+```typescript
+const queue = new Queue('myQueue', {
+  connection: {
+    host: 'localhost',
+    port: 6379,
+  },
+});
+```
+
+### With Authentication
+
+```typescript
+const queue = new Queue('myQueue', {
+  connection: {
+    host: 'redis.example.com',
+    port: 6379,
+    password: 'secure-password',
+  },
+});
+```
+
+### With Redis 6 ACL
+
+```typescript
+const queue = new Queue('myQueue', {
+  connection: {
+    host: 'localhost',
+    port: 6379,
+    username: 'worker-user',
+    password: 'worker-password',
+  },
+});
+```
+
+### With TLS
+
+```typescript
+const queue = new Queue('myQueue', {
+  connection: {
+    host: 'redis.example.com',
+    port: 6380,
+    tls: {
+      rejectUnauthorized: true,
+      ca: fs.readFileSync('ca.crt'),
+    },
+  },
+});
+```
+
+### With Custom Retry Strategy
+
+```typescript
+const queue = new Queue('myQueue', {
+  connection: {
+    host: 'localhost',
+    port: 6379,
+    retryStrategy: (times) => {
+      // Exponential backoff with max 20 seconds
+      return Math.min(times * 1000, 20000);
+    },
+  },
+});
+```
+
+### Using Redis URL
+
+```typescript
+const queue = new Queue('myQueue', {
+  connection: {
+    url: 'redis://user:password@localhost:6379/0',
+  },
+});
+```
+
+## Using Existing Redis Client
+
+You can pass an existing ioredis client instance:
+
+```typescript
+import IORedis from 'ioredis';
+import { Queue, Worker } from 'bullmq';
+
+const connection = new IORedis({
+  host: 'localhost',
+  port: 6379,
+  maxRetriesPerRequest: null,  // Required for Workers
+});
+
+const queue = new Queue('myQueue', { connection });
+const worker = new Worker('myQueue', processor, { connection });
+```
+
+## Redis Cluster
+
+For Redis Cluster, create an ioredis Cluster instance:
+
+```typescript
+import IORedis from 'ioredis';
+
+const connection = new IORedis.Cluster([
+  { host: 'node1.example.com', port: 6379 },
+  { host: 'node2.example.com', port: 6379 },
+  { host: 'node3.example.com', port: 6379 },
+], {
+  redisOptions: {
+    password: 'cluster-password',
+  },
+});
+
+const queue = new Queue('myQueue', { connection });
+```
+
+## Redis Sentinel
+
+For Redis Sentinel:
+
+```typescript
+const queue = new Queue('myQueue', {
+  connection: {
+    sentinels: [
+      { host: 'sentinel1.example.com', port: 26379 },
+      { host: 'sentinel2.example.com', port: 26379 },
+      { host: 'sentinel3.example.com', port: 26379 },
+    ],
+    name: 'mymaster',
+    password: 'redis-password',
+  },
+});
+```
+
+## Important Notes
+
+### maxRetriesPerRequest for Workers
+
+Workers require `maxRetriesPerRequest: null` because they use blocking operations:
+
+```typescript
+// Correct for Workers
+const connection = new IORedis({
+  host: 'localhost',
+  port: 6379,
+  maxRetriesPerRequest: null,
+});
+
+const worker = new Worker('myQueue', processor, { connection });
+```
+
+BullMQ automatically sets this when you provide connection options directly.
+
+### Connection Sharing
+
+Multiple BullMQ instances can share the same connection:
+
+```typescript
+import IORedis from 'ioredis';
+
+const connection = new IORedis({
+  host: 'localhost',
+  port: 6379,
+  maxRetriesPerRequest: null,
+});
+
+const queue1 = new Queue('queue1', { connection });
+const queue2 = new Queue('queue2', { connection });
+const worker1 = new Worker('queue1', processor1, { connection });
+const worker2 = new Worker('queue2', processor2, { connection });
+```
+
+### Closing Shared Connections
+
+When sharing connections, close the connection manually after closing all instances:
+
+```typescript
+await queue1.close();
+await queue2.close();
+await worker1.close();
+await worker2.close();
+
+// Now close the shared connection
+await connection.quit();
+```
+
+## Environment Variables
+
+You can use environment variables for connection configuration:
+
+```typescript
+const queue = new Queue('myQueue', {
+  connection: {
+    host: process.env.REDIS_HOST || 'localhost',
+    port: parseInt(process.env.REDIS_PORT || '6379'),
+    password: process.env.REDIS_PASSWORD,
+    db: parseInt(process.env.REDIS_DB || '0'),
+  },
+});
+```

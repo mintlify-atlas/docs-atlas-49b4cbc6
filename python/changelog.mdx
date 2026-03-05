@@ -1,0 +1,99 @@
+---
+title: Changelog
+description: Release history for BullMQ Python
+---
+
+## [2.19.5](https://github.com/taskforcesh/bullmq/compare/vpy2.19.4...vpy2.19.5) (2026-02-11)
+
+### Performance Improvements
+
+* **job:** reuse registered scripts [python] ([#3757](https://github.com/taskforcesh/bullmq/issues/3757)) ([715d0a5](https://github.com/taskforcesh/bullmq/commit/715d0a5074864ed0c12a384e41740b219382ac80))
+
+## [2.19.4](https://github.com/taskforcesh/bullmq/compare/vpy2.19.3...vpy2.19.4) (2026-01-28)
+
+### Bug Fixes
+
+* use prioritized key name instead of priority [python] ([#3717](https://github.com/taskforcesh/bullmq/issues/3717)) fixes [#3716](https://github.com/taskforcesh/bullmq/issues/3716) ([f824c01](https://github.com/taskforcesh/bullmq/commit/f824c01c53d57e75d7b57efce7a124adffed9dfa))
+
+## [2.19.3](https://github.com/taskforcesh/bullmq/compare/vpy2.19.2...vpy2.19.3) (2026-01-24)
+
+### Bug Fixes
+
+* fix worker connection name on cluster [#3340](https://github.com/taskforcesh/bullmq/issues/3340) (elixir) (python) ([#3660](https://github.com/taskforcesh/bullmq/issues/3660)) ([fa22e84](https://github.com/taskforcesh/bullmq/commit/fa22e844d29961db95df58f2ae63b440d71c11f6))
+
+## [2.19.2](https://github.com/taskforcesh/bullmq/compare/vpy2.19.1...vpy2.19.2) (2026-01-22)
+
+### Bug Fixes
+
+* **queue:** add missing defaultJobOptions field to QueueBaseOptions TypedDict [python] ([#3702](https://github.com/taskforcesh/bullmq/issues/3702)) fixes [#3695](https://github.com/taskforcesh/bullmq/issues/3695) ([61504f1](https://github.com/taskforcesh/bullmq/commit/61504f12fe591295fea5b087a6b7c533465e8653))
+
+## [2.19.1](https://github.com/taskforcesh/bullmq/compare/vpy2.19.0...vpy2.19.1) (2026-01-22)
+
+### Performance Improvements
+
+* **job:** apply limit when removing jobs by max age (python) (elixir) ([#3694](https://github.com/taskforcesh/bullmq/issues/3694)) fixes [#3672](https://github.com/taskforcesh/bullmq/issues/3672) ([a8fc316](https://github.com/taskforcesh/bullmq/commit/a8fc316c0989bd3edb54577ceb02bff0c600aa93))
+
+## [2.19.0](https://github.com/taskforcesh/bullmq/compare/vpy2.18.3...vpy2.19.0) (2026-01-13)
+
+### Features
+
+* **queue:** support drain method [python] ([#3673](https://github.com/taskforcesh/bullmq/issues/3673)) ([21ab9cc](https://github.com/taskforcesh/bullmq/commit/21ab9cc5df2947e49aa132994dfe89e043b7082d))
+
+## [2.18.3](https://github.com/taskforcesh/bullmq/compare/vpy2.18.2...vpy2.18.3) (2025-12-25)
+
+### Bug Fixes
+
+* **queue:** convert boolean force parameter to string in obliterate method [python] ([#3642](https://github.com/taskforcesh/bullmq/issues/3642)) fixes [#3640](https://github.com/taskforcesh/bullmq/issues/3640) ([706da0d](https://github.com/taskforcesh/bullmq/commit/706da0dc703d6be353d0140f1fd0de7683362e60))
+
+## [2.18.2](https://github.com/taskforcesh/bullmq/compare/vpy2.18.1...vpy2.18.2) (2025-12-24)
+
+### Bug Fixes
+
+* **flow:** resolve KeyError when child job fails with failParentOnFailure option [python] ([#3639](https://github.com/taskforcesh/bullmq/issues/3639)) fixes [#3638](https://github.com/taskforcesh/bullmq/issues/3638) ([7f602e1](https://github.com/taskforcesh/bullmq/commit/7f602e1c6e31070f02c5ee5babbff33f55193551))
+
+## [2.18.1](https://github.com/taskforcesh/bullmq/compare/vpy2.18.0...vpy2.18.1) (2025-12-20)
+
+### Bug Fixes
+
+* **flow:** support failParentOnFailure and related dependency options with validation [python] ([#3621](https://github.com/taskforcesh/bullmq/issues/3621)) fixes [#3620](https://github.com/taskforcesh/bullmq/issues/3620) ([9c533c0](https://github.com/taskforcesh/bullmq/commit/9c533c0347865445b7f7df6b1c6e0923d25b4a8f))
+
+## [2.18.0](https://github.com/taskforcesh/bullmq/compare/vpy2.17.0...vpy2.18.0) (2025-12-19)
+
+### Features
+
+* **add:** add deduplication support [python] ([#3614](https://github.com/taskforcesh/bullmq/issues/3614)) ref [#3613](https://github.com/taskforcesh/bullmq/issues/3613) ([0c3beb5](https://github.com/taskforcesh/bullmq/commit/0c3beb58f4a8c90ad7800f5616c2a3494a952963))
+
+## [2.17.0](https://github.com/taskforcesh/bullmq/compare/vpy2.16.2...vpy2.17.0) (2025-12-14)
+
+### Features
+
+* **job:** support retry method options [elixir] [python] ([#3601](https://github.com/taskforcesh/bullmq/issues/3601)) ([6e406a9](https://github.com/taskforcesh/bullmq/commit/6e406a94a5a2fe1f2c1c6e8a1073c6c9b1f11092))
+
+## [2.16.2](https://github.com/taskforcesh/bullmq/compare/vpy2.16.1...vpy2.16.2) (2025-12-02)
+
+### Bug Fixes
+
+* **worker:** add retryIfFailed method fixes [#3517](https://github.com/taskforcesh/bullmq/issues/3517) [python] ([#3521](https://github.com/taskforcesh/bullmq/issues/3521)) ([c385b52](https://github.com/taskforcesh/bullmq/commit/c385b520b9fbe3dd58cdaead79c258835cab4361))
+
+## [2.16.1](https://github.com/taskforcesh/bullmq/compare/vpy2.16.0...vpy2.16.1) (2025-09-08)
+
+### Bug Fixes
+
+* **deps:** upgrade semver to v3 [python] ([#3414](https://github.com/taskforcesh/bullmq/issues/3414)) ([7dfd251](https://github.com/taskforcesh/bullmq/commit/7dfd2510a7bb03301365a2c24f045a0cd20580ef))
+
+## [2.16.0](https://github.com/taskforcesh/bullmq/compare/vpy2.15.1...vpy2.16.0) (2025-09-07)
+
+### Features
+
+* **queue:** support getWaitingCount method [python] ([#3434](https://github.com/taskforcesh/bullmq/issues/3434)) ([1c75abb](https://github.com/taskforcesh/bullmq/commit/1c75abb4806971a2ac14c47b302c87f86095a2c3))
+
+## [2.15.1](https://github.com/taskforcesh/bullmq/compare/vpy2.15.0...vpy2.15.1) (2025-09-06)
+
+### Bug Fixes
+
+* **job:** consider parent update when retrying ([#3402](https://github.com/taskforcesh/bullmq/issues/3402)) (python) fixes [#3320](https://github.com/taskforcesh/bullmq/issues/3320) ([316d1ed](https://github.com/taskforcesh/bullmq/commit/316d1ed32680e690b1d2ab92c79a53e0d4c00c2d))
+* **job:** pass stacktrace into scripts on failures [python] ([#3294](https://github.com/taskforcesh/bullmq/issues/3294)) ([97b215d](https://github.com/taskforcesh/bullmq/commit/97b215d5a7aeaf4dceb4543bef1a00e463f12197))
+
+<Card title="View Full Changelog" icon="github" href="https://github.com/taskforcesh/bullmq/blob/master/python/CHANGELOG.md">
+  See the complete version history on GitHub
+</Card>

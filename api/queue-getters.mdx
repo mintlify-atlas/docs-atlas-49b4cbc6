@@ -1,0 +1,406 @@
+---
+title: 'QueueGetters'
+description: 'Provides getters for different aspects of a queue'
+---
+
+## Overview
+
+The QueueGetters class provides various getter methods for retrieving information about jobs, counts, and queue state. The Queue class extends QueueGetters, so all these methods are available on Queue instances.
+
+<Note>
+  You typically don't instantiate QueueGetters directly. Use the Queue class which inherits these methods.
+</Note>
+
+## Methods
+
+### getJob
+
+Fetches a job by its ID.
+
+```typescript
+getJob(jobId: string): Promise<Job | undefined>
+```
+
+<ParamField path="jobId" type="string" required>
+  The job ID to fetch
+</ParamField>
+
+### count
+
+Returns the number of jobs waiting to be processed.
+
+```typescript
+count(): Promise<number>
+```
+
+<ResponseField name="count" type="number">
+  Total count of waiting, paused, delayed, prioritized, and waiting-children jobs
+</ResponseField>
+
+### getJobCounts
+
+Returns the job counts for each type specified.
+
+```typescript
+getJobCounts(...types: JobType[]): Promise<{ [index: string]: number }>
+```
+
+<ParamField path="types" type="JobType[]">
+  Job types to count (e.g., 'waiting', 'active', 'completed', 'failed')
+</ParamField>
+
+```typescript
+const counts = await queue.getJobCounts('waiting', 'active', 'completed');
+// { waiting: 5, active: 2, completed: 100 }
+```
+
+### getJobCountByTypes
+
+Returns the total count for specified job types.
+
+```typescript
+getJobCountByTypes(...types: JobType[]): Promise<number>
+```
+
+### getCompletedCount
+
+Returns the number of jobs in completed status.
+
+```typescript
+getCompletedCount(): Promise<number>
+```
+
+### getFailedCount
+
+Returns the number of jobs in failed status.
+
+```typescript
+getFailedCount(): Promise<number>
+```
+
+### getDelayedCount
+
+Returns the number of jobs in delayed status.
+
+```typescript
+getDelayedCount(): Promise<number>
+```
+
+### getActiveCount
+
+Returns the number of jobs in active status.
+
+```typescript
+getActiveCount(): Promise<number>
+```
+
+### getWaitingCount
+
+Returns the number of jobs in waiting or paused status.
+
+```typescript
+getWaitingCount(): Promise<number>
+```
+
+### getWaitingChildrenCount
+
+Returns the number of jobs in waiting-children status.
+
+```typescript
+getWaitingChildrenCount(): Promise<number>
+```
+
+### getPrioritizedCount
+
+Returns the number of jobs in prioritized status.
+
+```typescript
+getPrioritizedCount(): Promise<number>
+```
+
+### getCountsPerPriority
+
+Returns the number of jobs per priority level.
+
+```typescript
+getCountsPerPriority(priorities: number[]): Promise<{ [index: string]: number }>
+```
+
+<ParamField path="priorities" type="number[]" required>
+  Array of priority values to check
+</ParamField>
+
+```typescript
+const counts = await queue.getCountsPerPriority([0, 1, 2]);
+// { '0': 10, '1': 5, '2': 3 }
+```
+
+### getJobs
+
+Returns jobs on the given statuses.
+
+```typescript
+getJobs(
+  types?: JobType[],
+  start?: number,
+  end?: number,
+  asc?: boolean
+): Promise<Job[]>
+```
+
+<ParamField path="types" type="JobType[]">
+  Job statuses to retrieve
+</ParamField>
+
+<ParamField path="start" type="number" default="0">
+  Zero-based index from where to start
+</ParamField>
+
+<ParamField path="end" type="number" default="-1">
+  Zero-based index where to stop
+</ParamField>
+
+<ParamField path="asc" type="boolean" default="false">
+  If true, return in ascending order
+</ParamField>
+
+### getWaiting
+
+Returns jobs in waiting status.
+
+```typescript
+getWaiting(start?: number, end?: number): Promise<Job[]>
+```
+
+### getWaitingChildren
+
+Returns jobs in waiting-children status.
+
+```typescript
+getWaitingChildren(start?: number, end?: number): Promise<Job[]>
+```
+
+### getActive
+
+Returns jobs in active status.
+
+```typescript
+getActive(start?: number, end?: number): Promise<Job[]>
+```
+
+### getDelayed
+
+Returns jobs in delayed status.
+
+```typescript
+getDelayed(start?: number, end?: number): Promise<Job[]>
+```
+
+### getPrioritized
+
+Returns jobs in prioritized status.
+
+```typescript
+getPrioritized(start?: number, end?: number): Promise<Job[]>
+```
+
+### getCompleted
+
+Returns jobs in completed status.
+
+```typescript
+getCompleted(start?: number, end?: number): Promise<Job[]>
+```
+
+### getFailed
+
+Returns jobs in failed status.
+
+```typescript
+getFailed(start?: number, end?: number): Promise<Job[]>
+```
+
+### getJobLogs
+
+Returns the logs for a given job.
+
+```typescript
+getJobLogs(
+  jobId: string,
+  start?: number,
+  end?: number,
+  asc?: boolean
+): Promise<{ logs: string[]; count: number }>
+```
+
+<ParamField path="jobId" type="string" required>
+  The job ID to get logs for
+</ParamField>
+
+<ParamField path="start" type="number" default="0">
+  Start index
+</ParamField>
+
+<ParamField path="end" type="number" default="-1">
+  End index
+</ParamField>
+
+<ParamField path="asc" type="boolean" default="true">
+  Return in ascending order
+</ParamField>
+
+### getJobState
+
+Gets the current state of a job.
+
+```typescript
+getJobState(jobId: string): Promise<JobState | 'unknown'>
+```
+
+<ResponseField name="state" type="string">
+  One of: 'completed', 'failed', 'delayed', 'active', 'waiting', 'waiting-children', 'unknown'
+</ResponseField>
+
+### getDependencies
+
+Returns the dependencies of a parent job.
+
+```typescript
+getDependencies(
+  parentId: string,
+  type: 'processed' | 'pending',
+  start: number,
+  end: number
+): Promise<{
+  items: { id: string; v?: any; err?: string }[];
+  jobs: JobJsonRaw[];
+  total: number;
+}>
+```
+
+### getMeta
+
+Returns the global queue configuration.
+
+```typescript
+getMeta(): Promise<QueueMeta>
+```
+
+### getGlobalConcurrency
+
+Gets the global concurrency value.
+
+```typescript
+getGlobalConcurrency(): Promise<number | null>
+```
+
+### getGlobalRateLimit
+
+Gets the global rate limit values.
+
+```typescript
+getGlobalRateLimit(): Promise<{ max: number; duration: number } | null>
+```
+
+### getRateLimitTtl
+
+Returns the time to live for a rate limited key.
+
+```typescript
+getRateLimitTtl(maxJobs?: number): Promise<number>
+```
+
+<ResponseField name="ttl" type="number">
+  -2 if key does not exist, -1 if key exists but has no expire, otherwise TTL in milliseconds
+</ResponseField>
+
+### getDeduplicationJobId
+
+Gets the job ID from deduplicated state.
+
+```typescript
+getDeduplicationJobId(id: string): Promise<string | null>
+```
+
+<ParamField path="id" type="string" required>
+  Deduplication identifier
+</ParamField>
+
+### getWorkers
+
+Gets the worker list related to the queue.
+
+```typescript
+getWorkers(): Promise<Array<{ [index: string]: string }>>
+```
+
+### getWorkersCount
+
+Returns the current count of workers for the queue.
+
+```typescript
+getWorkersCount(): Promise<number>
+```
+
+### getMetrics
+
+Gets queue metrics.
+
+```typescript
+getMetrics(
+  type: 'completed' | 'failed',
+  start?: number,
+  end?: number
+): Promise<Metrics>
+```
+
+<ParamField path="type" type="string" required>
+  Metric type: 'completed' or 'failed'
+</ParamField>
+
+<ParamField path="start" type="number" default="0">
+  Start point (0 is newest)
+</ParamField>
+
+<ParamField path="end" type="number" default="-1">
+  End point (-1 is oldest)
+</ParamField>
+
+### exportPrometheusMetrics
+
+Exports metrics in Prometheus format.
+
+```typescript
+exportPrometheusMetrics(
+  globalVariables?: Record<string, string>
+): Promise<string>
+```
+
+<ParamField path="globalVariables" type="Record<string, string>">
+  Additional labels to include in metrics
+</ParamField>
+
+```typescript
+const metrics = await queue.exportPrometheusMetrics({
+  service: 'my-service',
+  environment: 'production',
+});
+
+console.log(metrics);
+// # HELP bullmq_job_count Number of jobs in the queue by state
+// # TYPE bullmq_job_count gauge
+// bullmq_job_count{queue="myQueue", state="waiting", service="my-service", environment="production"} 5
+```
+
+## JobType
+
+Valid job types/states:
+
+- `'active'` - Currently being processed
+- `'waiting'` - Waiting to be processed
+- `'completed'` - Successfully completed
+- `'failed'` - Failed after all attempts
+- `'delayed'` - Scheduled for future processing
+- `'paused'` - In a paused queue
+- `'prioritized'` - Waiting with priority
+- `'waiting-children'` - Waiting for child jobs to complete

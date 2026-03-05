@@ -1,0 +1,164 @@
+---
+title: AWS MemoryDB
+description: Configure AWS MemoryDB for Redis as a managed database for BullMQ
+---
+
+AWS MemoryDB provides a Redis 7 compatible managed database that is fully compatible with BullMQ. It offers durability, high availability, and automatic failover.
+
+## Key Considerations
+
+When using AWS MemoryDB with BullMQ, keep these important points in mind:
+
+<Warning>
+- **Cluster mode only** - MemoryDB only works in Cluster mode, so you need to use "hash tags" to ensure queues are attached to a specific cluster node
+- **VPC access only** - MemoryDB can only be accessed within an AWS VPC; you cannot access the Redis cluster from outside AWS
+</Warning>
+
+## Setup Guide
+
+<Steps>
+  <Step title="Install IORedis Cluster support">
+    Install the IORedis library which provides cluster support:
+    
+    ```bash
+    npm install ioredis
+    ```
+  </Step>
+  
+  <Step title="Create a Cluster connection">
+    Instantiate an IORedis Cluster instance with your MemoryDB endpoint:
+    
+    ```typescript
+    import { Cluster } from 'ioredis';
+    
+    const connection = new Cluster(
+      [
+        {
+          host: 'clustercfg.xxx.amazonaws.com',
+          port: 6379,
+        },
+      ],
+      {
+        tls: {},
+      },
+    );
+    ```
+  </Step>
+  
+  <Step title="Use the connection with BullMQ">
+    Pass the cluster connection to your Queue and Worker instances:
+    
+    ```typescript
+    import { Queue, Worker, Job } from 'bullmq';
+    
+    // Create queue with cluster connection
+    const queue = new Queue('myqueue', { connection });
+    
+    // Create worker with cluster connection
+    const worker = new Worker(
+      'myqueue',
+      async (job: Job) => {
+        // Process your job
+        console.log('Processing job:', job.id);
+      },
+      { connection },
+    );
+    ```
+  </Step>
+  
+  <Step title="Graceful shutdown">
+    Always close both the worker and connection when shutting down:
+    
+    ```typescript
+    // Graceful shutdown
+    process.on('SIGTERM', async () => {
+      await worker.close();
+      await connection.quit();
+      process.exit(0);
+    });
+    ```
+  </Step>
+</Steps>
+
+## Complete Example
+
+```typescript
+import { Cluster } from 'ioredis';
+import { Worker, Queue, Job } from 'bullmq';
+
+// Create cluster connection
+const connection = new Cluster(
+  [
+    {
+      host: 'clustercfg.xxx.amazonaws.com',
+      port: 6379,
+    },
+  ],
+  {
+    tls: {},
+  },
+);
+
+// Create queue
+const queue = new Queue('myqueue', { connection });
+
+// Create worker
+const worker = new Worker(
+  'myqueue',
+  async (job: Job) => {
+    // Do some useful work
+    console.log('Processing:', job.data);
+  },
+  { connection },
+);
+
+// Handle shutdown
+const shutdown = async () => {
+  await worker.close();
+  await connection.quit();
+  process.exit(0);
+};
+
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
+```
+
+## Hash Tags for Cluster Mode
+
+<Info>
+MemoryDB uses cluster mode, which means you should use hash tags in your queue names to ensure all keys for a queue are on the same cluster node. Learn more about [Redis Cluster and hash tags](/bull/patterns/redis-cluster).
+</Info>
+
+```typescript
+// Use hash tags in queue names
+const queue = new Queue('{myqueue}', { connection });
+const worker = new Worker('{myqueue}', processor, { connection });
+```
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Enable TLS" icon="lock">
+    Always use TLS for secure connections to MemoryDB
+  </Card>
+  <Card title="Use VPC Peering" icon="network-wired">
+    Set up VPC peering if accessing from different VPCs
+  </Card>
+  <Card title="Monitor Performance" icon="chart-line">
+    Use CloudWatch metrics to monitor your MemoryDB cluster
+  </Card>
+  <Card title="Configure Security Groups" icon="shield">
+    Properly configure security groups for access control
+  </Card>
+</CardGroup>
+
+## Related Resources
+
+<CardGroup cols={2}>
+  <Card title="AWS ElastiCache" icon="aws" href="/redis/hosting-aws-elasticache">
+    Alternative AWS managed Redis option
+  </Card>
+  <Card title="Going to Production" icon="rocket" href="/operations/going-to-production">
+    Production deployment best practices
+  </Card>
+</CardGroup>

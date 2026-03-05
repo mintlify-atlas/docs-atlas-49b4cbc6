@@ -1,0 +1,394 @@
+---
+title: 'Remove Dependency'
+description: 'Remove failed children from parent dependencies to allow parent completion'
+---
+
+In some situations, you may have a parent job and need to remove the relationship when one of its children fails. The `removeDependencyOnFailure` option allows the parent to complete without waiting for failed children.
+
+## How It Works
+
+The `removeDependencyOnFailure` option makes sure that when a job fails, the dependency is removed from the parent, so the parent will complete without waiting for the failed children.
+
+<Info>
+  As soon as a child with this option fails, the parent job will be moved to a waiting state only if there are no more pending children.
+</Info>
+
+## Basic Usage
+
+```typescript
+import { FlowProducer } from 'bullmq';
+
+const flow = new FlowProducer({ connection });
+
+const originalTree = await flow.add({
+  name: 'root-job',
+  queueName: 'topQueueName',
+  data: {},
+  children: [
+    {
+      name: 'child-job',
+      data: { idx: 0, foo: 'bar' },
+      queueName: 'childrenQueueName',
+      opts: { removeDependencyOnFailure: true },
+      children: [
+        {
+          name: 'grandchild-1',
+          data: { idx: 1, foo: 'bah' },
+          queueName: 'grandChildrenQueueName',
+        },
+        {
+          name: 'grandchild-2',
+          data: { idx: 2, foo: 'baz' },
+          queueName: 'grandChildrenQueueName',
+        },
+      ],
+    },
+    {
+      name: 'another-child',
+      data: { idx: 3, foo: 'foo' },
+      queueName: 'childrenQueueName',
+    },
+  ],
+});
+```
+
+## Behavior
+
+When a child job with `removeDependencyOnFailure: true` fails:
+
+1. The dependency relationship is removed from the parent
+2. The failed child is no longer tracked in the parent's dependencies
+3. The parent can complete without waiting for this child
+4. If this was the last pending child, the parent moves to waiting state
+
+<Steps>
+  <Step title="Child job fails">
+    A child with `removeDependencyOnFailure: true` encounters an error and moves to failed state.
+  </Step>
+  <Step title="Dependency removed">
+    BullMQ removes this child from the parent's dependency list.
+  </Step>
+  <Step title="Check remaining dependencies">
+    If there are still other pending children, the parent continues waiting.
+  </Step>
+  <Step title="Parent becomes active">
+    Once all other children complete, the parent moves to waiting state and can be processed.
+  </Step>
+</Steps>
+
+## Example with Multiple Children
+
+```typescript
+const flow = await flowProducer.add({
+  name: 'data-processing',
+  queueName: 'processing',
+  data: { batchId: '123' },
+  children: [
+    {
+      name: 'required-validation',
+      queueName: 'validation',
+      data: { type: 'required' },
+      // No removeDependencyOnFailure - this MUST succeed
+    },
+    {
+      name: 'optional-enrichment',
+      queueName: 'enrichment',
+      data: { type: 'optional' },
+      opts: { removeDependencyOnFailure: true },
+      // Can fail without blocking parent
+    },
+    {
+      name: 'best-effort-analysis',
+      queueName: 'analysis',
+      data: { type: 'best-effort' },
+      opts: { removeDependencyOnFailure: true },
+      // Can fail without blocking parent
+    },
+  ],
+});
+```
+
+In this example:
+- If `optional-enrichment` or `best-effort-analysis` fails, they are removed from dependencies
+- The parent will process once `required-validation` completes
+- If `required-validation` fails, the parent will not process (default behavior)
+
+## Use Cases
+
+<AccordionGroup>
+  <Accordion title="Optional Data Enrichment">
+    Process data with optional enrichment steps that can fail without affecting the core workflow:
+
+    ```typescript
+    const flow = await flowProducer.add({
+      name: 'process-user-data',
+      queueName: 'user-processing',
+      data: { userId: '12345' },
+      children: [
+        {
+          name: 'validate-user',
+          queueName: 'validation',
+          data: {},
+          // Required - must succeed
+        },
+        {
+          name: 'enrich-with-social',
+          queueName: 'enrichment',
+          data: { source: 'social-media' },
+          opts: { removeDependencyOnFailure: true },
+          // Optional - can fail
+        },
+        {
+          name: 'enrich-with-demographics',
+          queueName: 'enrichment',
+          data: { source: 'demographics-api' },
+          opts: { removeDependencyOnFailure: true },
+          // Optional - can fail
+        },
+      ],
+    });
+
+    const userWorker = new Worker('user-processing', async job => {
+      // Process user data with whatever enrichment succeeded
+      const childrenValues = await job.getChildrenValues();
+      
+      return {
+        userId: job.data.userId,
+        validated: true,
+        enrichments: childrenValues,
+      };
+    });
+    ```
+  </Accordion>
+
+  <Accordion title="Best-Effort Notifications">
+    Send notifications that shouldn't block the main workflow:
+
+    ```typescript
+    const orderFlow = await flowProducer.add({
+      name: 'process-order',
+      queueName: 'orders',
+      data: { orderId: 'ORD-123' },
+      children: [
+        {
+          name: 'charge-payment',
+          queueName: 'payments',
+          data: {},
+          // Required - must succeed
+        },
+        {
+          name: 'update-inventory',
+          queueName: 'inventory',
+          data: {},
+          // Required - must succeed
+        },
+        {
+          name: 'send-sms-notification',
+          queueName: 'notifications',
+          data: { type: 'sms' },
+          opts: { removeDependencyOnFailure: true },
+          // Optional - SMS failure shouldn't block order
+        },
+        {
+          name: 'send-email-receipt',
+          queueName: 'notifications',
+          data: { type: 'email' },
+          opts: { removeDependencyOnFailure: true },
+          // Optional - email failure shouldn't block order
+        },
+      ],
+    });
+    ```
+  </Accordion>
+
+  <Accordion title="Analytics and Tracking">
+    Track analytics without blocking the main business logic:
+
+    ```typescript
+    const signupFlow = await flowProducer.add({
+      name: 'complete-signup',
+      queueName: 'signups',
+      data: { email: 'user@example.com' },
+      children: [
+        {
+          name: 'create-account',
+          queueName: 'accounts',
+          data: {},
+          // Required
+        },
+        {
+          name: 'send-welcome-email',
+          queueName: 'emails',
+          data: {},
+          // Required
+        },
+        {
+          name: 'track-analytics',
+          queueName: 'analytics',
+          data: { event: 'signup' },
+          opts: { removeDependencyOnFailure: true },
+          // Optional - analytics failure shouldn't block signup
+        },
+        {
+          name: 'update-crm',
+          queueName: 'crm',
+          data: {},
+          opts: { removeDependencyOnFailure: true },
+          // Optional - CRM failure shouldn't block signup
+        },
+      ],
+    });
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Difference from ignoreDependencyOnFailure
+
+`removeDependencyOnFailure` is similar to `ignoreDependencyOnFailure`, but with key differences:
+
+<CardGroup cols={2}>
+  <Card title="removeDependencyOnFailure" icon="trash">
+    - Completely removes the child from dependencies
+    - Failed child is not tracked
+    - Cannot retrieve failed child information later
+  </Card>
+  <Card title="ignoreDependencyOnFailure" icon="eye-slash">
+    - Keeps the child in dependencies
+    - Failed child is tracked as "ignored"
+    - Can retrieve failed child information using `getIgnoredChildrenFailures()`
+  </Card>
+</CardGroup>
+
+```typescript
+// With removeDependencyOnFailure
+const flow1 = await flowProducer.add({
+  name: 'parent',
+  queueName: 'queue',
+  children: [
+    {
+      name: 'child',
+      queueName: 'queue',
+      opts: { removeDependencyOnFailure: true },
+    },
+  ],
+});
+
+// Parent processor
+const worker1 = new Worker('queue', async job => {
+  if (job.name === 'parent') {
+    // Cannot access removed child information
+    const childrenValues = await job.getChildrenValues();
+    // childrenValues will not include the failed child
+  }
+});
+
+// With ignoreDependencyOnFailure
+const flow2 = await flowProducer.add({
+  name: 'parent',
+  queueName: 'queue',
+  children: [
+    {
+      name: 'child',
+      queueName: 'queue',
+      opts: { ignoreDependencyOnFailure: true },
+    },
+  ],
+});
+
+// Parent processor
+const worker2 = new Worker('queue', async job => {
+  if (job.name === 'parent') {
+    // Can access ignored child information
+    const ignoredFailures = await job.getIgnoredChildrenFailures();
+    // ignoredFailures will include the failed child
+  }
+});
+```
+
+## Monitoring Removed Dependencies
+
+You can track when dependencies are removed:
+
+```typescript
+import { QueueEvents } from 'bullmq';
+
+const queueEvents = new QueueEvents('topQueueName', { connection });
+
+queueEvents.on('waiting', async ({ jobId }) => {
+  const job = await queue.getJob(jobId);
+  
+  if (job.parentKey) {
+    console.log(`Child ${jobId} completed, parent can now process`);
+  }
+});
+
+queueEvents.on('failed', async ({ jobId, failedReason }) => {
+  const job = await queue.getJob(jobId);
+  const opts = job.opts;
+  
+  if (opts.removeDependencyOnFailure) {
+    console.log(`Child ${jobId} failed but was removed from parent dependencies`);
+  }
+});
+```
+
+## Parent Processor Example
+
+Handle the case where some children were removed:
+
+```typescript
+import { Worker } from 'bullmq';
+
+const parentWorker = new Worker('topQueueName', async job => {
+  const childrenValues = await job.getChildrenValues();
+  
+  // Get dependency counts to see what happened
+  const { processed, failed } = await job.getDependenciesCount();
+  
+  console.log(`Processed: ${processed}, Failed (removed): ${failed}`);
+  
+  // Process with whatever children succeeded
+  const results = Object.values(childrenValues);
+  
+  if (results.length === 0) {
+    return { status: 'completed', note: 'All optional children failed' };
+  }
+  
+  return {
+    status: 'completed',
+    processedCount: results.length,
+    data: processResults(results),
+  };
+});
+```
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Use for Optional Features" icon="puzzle-piece">
+    Apply to children that provide optional enhancements or features
+  </Card>
+  <Card title="Not for Critical Paths" icon="triangle-exclamation">
+    Never use for children that are critical to the workflow
+  </Card>
+  <Card title="Log Removed Dependencies" icon="file-lines">
+    Track when dependencies are removed for monitoring and debugging
+  </Card>
+  <Card title="Handle Missing Data" icon="database">
+    Parent should handle cases where optional children didn't provide data
+  </Card>
+</CardGroup>
+
+<Warning>
+  Use `removeDependencyOnFailure` carefully. The parent job will have no record of the failed child, making debugging more difficult. Consider using `ignoreDependencyOnFailure` if you need to track failed optional children.
+</Warning>
+
+<Tip>
+  For better observability, use `ignoreDependencyOnFailure` instead of `removeDependencyOnFailure` when you want to keep track of which optional children failed.
+</Tip>
+
+## API Reference
+
+- [Add Flow API Reference](https://api.docs.bullmq.io/classes/v5.FlowProducer.html#add)
+- [FlowProducer API Reference](https://api.docs.bullmq.io/classes/v5.FlowProducer.html)
+- [Job Options API Reference](https://api.docs.bullmq.io/interfaces/v5.JobsOptions.html)

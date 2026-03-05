@@ -1,0 +1,199 @@
+---
+title: Installation
+description: How to install BullMQ for Elixir
+---
+
+## Add to Dependencies
+
+Add `bullmq` to your list of dependencies in `mix.exs`:
+
+```elixir
+def deps do
+  [
+    {:bullmq, "~> 1.2"}
+  ]
+end
+```
+
+Then run:
+
+```bash
+mix deps.get
+```
+
+## Requirements
+
+- **Elixir**: 1.15 or higher
+- **Erlang/OTP**: 26 or higher
+- **Redis**: 6.0 or higher (7.0+ recommended for best performance)
+
+## Dependencies
+
+BullMQ for Elixir includes the following dependencies:
+
+- **redix** (~> 1.3) - Redis client
+- **nimble_pool** (~> 1.0) - Connection pooling
+- **nimble_options** (~> 1.0) - Configuration validation
+- **jason** (~> 1.4) - JSON encoding/decoding
+- **crontab** (~> 1.1) - Cron expression parsing
+- **msgpax** (~> 2.4) - MessagePack encoding for Lua scripts
+- **elixir_uuid** (~> 1.2) - UUID generation
+- **telemetry** (~> 1.2) - Instrumentation and monitoring
+
+## Redis Setup
+
+BullMQ requires a Redis server. You can:
+
+### Run Redis Locally
+
+```bash
+# Using Docker
+docker run -d -p 6379:6379 redis:latest
+
+# Or install Redis directly
+# On Ubuntu/Debian:
+sudo apt-get install redis-server
+
+# On macOS:
+brew install redis
+```
+
+### Use a Managed Redis Service
+
+For production, consider using a managed Redis service:
+
+- [Redis Cloud](https://redis.com/cloud/)
+- [AWS ElastiCache](https://aws.amazon.com/elasticache/)
+- [Google Cloud Memorystore](https://cloud.google.com/memorystore)
+- [Azure Cache for Redis](https://azure.microsoft.com/en-us/services/cache/)
+
+## Add Redis Connection to Supervision Tree
+
+Add a Redix connection to your application's supervision tree:
+
+```elixir
+defmodule MyApp.Application do
+  use Application
+
+  def start(_type, _args) do
+    children = [
+      # Start Redis connection
+      {Redix, name: :my_redis, host: "localhost", port: 6379},
+      
+      # Your other supervised processes...
+    ]
+
+    opts = [strategy: :one_for_one, name: MyApp.Supervisor]
+    Supervisor.start_link(children, opts)
+  end
+end
+```
+
+## Configuration
+
+You can configure your Redis connection in `config/config.exs`:
+
+```elixir
+config :my_app, :redis,
+  host: "localhost",
+  port: 6379,
+  password: nil,
+  database: 0
+```
+
+Then in your application:
+
+```elixir
+redis_opts = Application.get_env(:my_app, :redis)
+{Redix, Keyword.put(redis_opts, :name, :my_redis)}
+```
+
+## Verify Installation
+
+You can verify the installation by running:
+
+```bash
+mix deps
+```
+
+You should see `bullmq` in the list of dependencies.
+
+## Test Redis Connection
+
+Create a simple test to verify your Redis connection:
+
+```elixir
+# In iex -S mix
+{:ok, conn} = Redix.start_link(host: "localhost", port: 6379)
+Redix.command(conn, ["PING"])
+# Should return {:ok, "PONG"}
+```
+
+## Common Issues
+
+### Redis Connection Errors
+
+If you can't connect to Redis:
+
+1. Verify Redis is running: `redis-cli ping` (should return `PONG`)
+2. Check your host and port configuration
+3. Ensure your firewall allows connections to the Redis port (default: 6379)
+4. If using Redis Cloud or other managed services, verify credentials
+
+### Compilation Errors
+
+If you encounter compilation errors:
+
+1. Ensure you're running Elixir 1.15+ and Erlang/OTP 26+
+2. Run `mix deps.clean --all && mix deps.get`
+3. Try `mix clean && mix compile`
+
+## Optional: Telemetry Setup
+
+For monitoring and observability, you can set up Telemetry handlers:
+
+```elixir
+defmodule MyApp.Telemetry do
+  require Logger
+
+  def attach_handlers do
+    :telemetry.attach_many(
+      "bullmq-telemetry",
+      [
+        [:bullmq, :job, :start],
+        [:bullmq, :job, :stop],
+        [:bullmq, :job, :exception]
+      ],
+      &handle_event/4,
+      nil
+    )
+  end
+
+  def handle_event([:bullmq, :job, :start], measurements, metadata, _config) do
+    Logger.info("Job started: #{metadata.job_id}")
+  end
+
+  def handle_event([:bullmq, :job, :stop], measurements, metadata, _config) do
+    Logger.info("Job completed: #{metadata.job_id} in #{measurements.duration}ms")
+  end
+
+  def handle_event([:bullmq, :job, :exception], measurements, metadata, _config) do
+    Logger.error("Job failed: #{metadata.job_id} - #{metadata.reason}")
+  end
+end
+```
+
+Call this in your application start:
+
+```elixir
+def start(_type, _args) do
+  MyApp.Telemetry.attach_handlers()
+  # ...
+end
+```
+
+## Next Steps
+
+<Card title="Usage Guide" icon="code" href="/elixir/usage">
+  Learn how to create queues and workers
+</Card>

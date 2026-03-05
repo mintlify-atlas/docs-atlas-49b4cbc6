@@ -1,0 +1,318 @@
+---
+title: 'JobOptions'
+description: 'Configuration options for individual jobs'
+---
+
+## Overview
+
+JobOptions (also known as JobsOptions) provides configuration for individual jobs added to a queue.
+
+## Interface
+
+```typescript
+interface JobsOptions extends BaseJobOptions {
+  jobId?: string;
+  delay?: number;
+  priority?: number;
+  attempts?: number;
+  backoff?: number | BackoffOptions;
+  lifo?: boolean;
+  removeOnComplete?: boolean | number | KeepJobs;
+  removeOnFail?: boolean | number | KeepJobs;
+  keepLogs?: number;
+  stackTraceLimit?: number;
+  sizeLimit?: number;
+  timestamp?: number;
+  repeat?: RepeatOptions;
+  parent?: ParentOptions;
+}
+```
+
+## Properties
+
+### jobId
+
+<ParamField path="jobId" type="string">
+  Override the job ID (must be unique)
+</ParamField>
+
+```typescript
+await queue.add('task', { data }, {
+  jobId: 'unique-task-123',
+});
+```
+
+### delay
+
+<ParamField path="delay" type="number" default="0">
+  Delay in milliseconds before the job can be processed
+</ParamField>
+
+```typescript
+// Process after 5 seconds
+await queue.add('task', { data }, {
+  delay: 5000,
+});
+```
+
+### priority
+
+<ParamField path="priority" type="number" default="0">
+  Priority from 0 (highest) to 2,097,152 (lowest)
+</ParamField>
+
+```typescript
+await queue.add('urgent-task', { data }, {
+  priority: 1,  // Higher priority
+});
+
+await queue.add('normal-task', { data }, {
+  priority: 10, // Lower priority
+});
+```
+
+### attempts
+
+<ParamField path="attempts" type="number" default="1">
+  Total number of attempts to try the job until it completes
+</ParamField>
+
+```typescript
+await queue.add('task', { data }, {
+  attempts: 3,  // Try up to 3 times
+});
+```
+
+### backoff
+
+<ParamField path="backoff" type="number | BackoffOptions">
+  Backoff setting for automatic retries if the job fails
+</ParamField>
+
+```typescript
+// Simple fixed backoff
+await queue.add('task', { data }, {
+  attempts: 3,
+  backoff: 5000,  // 5 second delay between retries
+});
+
+// Exponential backoff with jitter
+await queue.add('task', { data }, {
+  attempts: 5,
+  backoff: {
+    type: 'exponential',
+    delay: 1000,
+    jitter: 0.2,
+  },
+});
+```
+
+### lifo
+
+<ParamField path="lifo" type="boolean" default="false">
+  If true, adds the job to the left of the queue (LIFO) instead of the right (FIFO)
+</ParamField>
+
+```typescript
+await queue.add('task', { data }, {
+  lifo: true,  // Process this job before older waiting jobs
+});
+```
+
+### removeOnComplete
+
+<ParamField path="removeOnComplete" type="boolean | number | KeepJobs">
+  If true, removes the job when it successfully completes
+</ParamField>
+
+```typescript
+// Remove immediately
+await queue.add('task', { data }, {
+  removeOnComplete: true,
+});
+
+// Keep last 100 completed jobs
+await queue.add('task', { data }, {
+  removeOnComplete: 100,
+});
+
+// Keep completed jobs for 1 hour or max 1000
+await queue.add('task', { data }, {
+  removeOnComplete: {
+    age: 3600,
+    count: 1000,
+  },
+});
+```
+
+### removeOnFail
+
+<ParamField path="removeOnFail" type="boolean | number | KeepJobs">
+  If true, removes the job when it fails after all attempts
+</ParamField>
+
+```typescript
+await queue.add('task', { data }, {
+  removeOnFail: false,  // Keep failed jobs (default)
+});
+
+await queue.add('task', { data }, {
+  removeOnFail: {
+    age: 86400,  // Keep for 24 hours
+    count: 5000,
+  },
+});
+```
+
+### keepLogs
+
+<ParamField path="keepLogs" type="number">
+  Maximum number of log entries to preserve
+</ParamField>
+
+```typescript
+await queue.add('task', { data }, {
+  keepLogs: 100,  // Keep last 100 log entries
+});
+```
+
+### stackTraceLimit
+
+<ParamField path="stackTraceLimit" type="number">
+  Limits the number of stack trace lines recorded
+</ParamField>
+
+```typescript
+await queue.add('task', { data }, {
+  stackTraceLimit: 10,
+});
+```
+
+### sizeLimit
+
+<ParamField path="sizeLimit" type="number">
+  Limits the size in bytes of the job's data payload (JSON serialized)
+</ParamField>
+
+```typescript
+await queue.add('task', { data }, {
+  sizeLimit: 1024 * 100,  // 100 KB limit
+});
+```
+
+### timestamp
+
+<ParamField path="timestamp" type="number" default="Date.now()">
+  Timestamp when the job was created
+</ParamField>
+
+### repeat
+
+<ParamField path="repeat" type="RepeatOptions">
+  Repeat configuration for creating recurring jobs
+</ParamField>
+
+```typescript
+// Deprecated: Use queue.upsertJobScheduler instead
+await queue.add('task', { data }, {
+  repeat: {
+    pattern: '0 * * * *',  // Every hour
+  },
+});
+```
+
+### parent
+
+<ParamField path="parent" type="ParentOptions">
+  Parent job configuration for creating job dependencies
+</ParamField>
+
+```typescript
+// Typically used with FlowProducer, not directly
+await queue.add('child-task', { data }, {
+  parent: {
+    id: 'parent-job-id',
+    queue: 'bull:parentQueue',
+  },
+});
+```
+
+## Examples
+
+### Simple Job
+
+```typescript
+await queue.add('send-email', {
+  to: 'user@example.com',
+  subject: 'Hello',
+});
+```
+
+### Job with Retries
+
+```typescript
+await queue.add('api-call', { endpoint: '/users' }, {
+  attempts: 3,
+  backoff: {
+    type: 'exponential',
+    delay: 2000,
+  },
+});
+```
+
+### Delayed Job
+
+```typescript
+// Send email in 1 hour
+await queue.add('reminder', { userId: 123 }, {
+  delay: 60 * 60 * 1000,
+});
+```
+
+### High Priority Job
+
+```typescript
+await queue.add('urgent-notification', { message: 'Alert!' }, {
+  priority: 1,
+  lifo: true,
+});
+```
+
+### Job with Auto-Cleanup
+
+```typescript
+await queue.add('temp-task', { data }, {
+  removeOnComplete: true,
+  removeOnFail: {
+    age: 3600,  // Keep failed jobs for 1 hour
+  },
+});
+```
+
+## BackoffOptions
+
+```typescript
+interface BackoffOptions {
+  type: string;      // 'fixed', 'exponential', or custom
+  delay?: number;    // Delay in milliseconds
+  jitter?: number;   // Jitter factor (0-1)
+}
+```
+
+## KeepJobs
+
+```typescript
+type KeepJobs = {
+  age?: number;    // Max age in seconds
+  count?: number;  // Max count to keep
+};
+```
+
+## ParentOptions
+
+```typescript
+interface ParentOptions {
+  id: string;      // Parent job ID
+  queue: string;   // Qualified parent queue key
+}
+```

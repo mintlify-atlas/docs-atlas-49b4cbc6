@@ -1,0 +1,484 @@
+---
+title: 'Ignore Dependency'
+description: 'Allow parent jobs to complete while tracking failed children'
+---
+
+In some situations, you may have a parent job and need to ignore when one of its children fails. The `ignoreDependencyOnFailure` option allows the parent to complete without waiting for failed children, while still tracking which children failed.
+
+## How It Works
+
+The `ignoreDependencyOnFailure` option makes sure that when a job fails, the dependency is ignored from the parent, so the parent will complete without waiting for the failed children. Unlike `removeDependencyOnFailure`, the failed children are still tracked and can be retrieved later.
+
+<Info>
+  As soon as a child with this option fails, the parent job will be moved to a waiting state only if there are no more pending children.
+</Info>
+
+## Basic Usage
+
+```typescript
+import { FlowProducer } from 'bullmq';
+
+const flow = new FlowProducer({ connection });
+
+const originalTree = await flow.add({
+  name: 'root-job',
+  queueName: 'topQueueName',
+  data: {},
+  children: [
+    {
+      name: 'child-job',
+      data: { idx: 0, foo: 'bar' },
+      queueName: 'childrenQueueName',
+      opts: { ignoreDependencyOnFailure: true },
+      children: [
+        {
+          name: 'grandchild-1',
+          data: { idx: 1, foo: 'bah' },
+          queueName: 'grandChildrenQueueName',
+        },
+        {
+          name: 'grandchild-2',
+          data: { idx: 2, foo: 'baz' },
+          queueName: 'grandChildrenQueueName',
+        },
+      ],
+    },
+    {
+      name: 'another-child',
+      data: { idx: 3, foo: 'foo' },
+      queueName: 'childrenQueueName',
+    },
+  ],
+});
+```
+
+## Retrieving Ignored Failures
+
+Failed children using this option can be retrieved by the `getIgnoredChildrenFailures` method:
+
+```typescript
+const ignoredChildrenFailures =
+  await originalTree.job.getIgnoredChildrenFailures();
+
+// Returns an object with failed child keys and their error messages
+// Example: { 'bull:childrenQueueName:child-job-id': 'Error message' }
+```
+
+## Behavior
+
+When a child job with `ignoreDependencyOnFailure: true` fails:
+
+1. The dependency is marked as "ignored" in the parent
+2. The failed child is still tracked in the parent's dependencies
+3. The parent can complete without waiting for this child
+4. If this was the last pending child, the parent moves to waiting state
+5. You can retrieve ignored failures using `getIgnoredChildrenFailures()`
+
+<Steps>
+  <Step title="Child job fails">
+    A child with `ignoreDependencyOnFailure: true` encounters an error and moves to failed state.
+  </Step>
+  <Step title="Dependency marked ignored">
+    BullMQ marks this child as "ignored" in the parent's dependency list.
+  </Step>
+  <Step title="Check remaining dependencies">
+    If there are still other pending children, the parent continues waiting.
+  </Step>
+  <Step title="Parent becomes active">
+    Once all other children complete, the parent moves to waiting state and can be processed.
+  </Step>
+  <Step title="Access ignored failures">
+    Parent processor can retrieve information about ignored failures using `getIgnoredChildrenFailures()`.
+  </Step>
+</Steps>
+
+## Complete Example
+
+```typescript
+import { FlowProducer, Worker } from 'bullmq';
+
+const flow = new FlowProducer({ connection });
+
+// Create flow with optional children
+const tree = await flow.add({
+  name: 'process-order',
+  queueName: 'orders',
+  data: { orderId: 'ORD-123' },
+  children: [
+    {
+      name: 'charge-payment',
+      queueName: 'payments',
+      data: {},
+      // Required - must succeed
+    },
+    {
+      name: 'apply-discount-code',
+      queueName: 'discounts',
+      data: { code: 'SAVE10' },
+      opts: { ignoreDependencyOnFailure: true },
+      // Optional - can fail without blocking order
+    },
+    {
+      name: 'send-notification',
+      queueName: 'notifications',
+      data: { type: 'email' },
+      opts: { ignoreDependencyOnFailure: true },
+      // Optional - can fail without blocking order
+    },
+  ],
+});
+
+// Parent processor
+const orderWorker = new Worker('orders', async job => {
+  // Get successful children values
+  const childrenValues = await job.getChildrenValues();
+  
+  // Get ignored failures
+  const ignoredFailures = await job.getIgnoredChildrenFailures();
+  
+  // Log any ignored failures for monitoring
+  if (Object.keys(ignoredFailures).length > 0) {
+    console.warn('Some optional steps failed:', ignoredFailures);
+    await logFailures(job.data.orderId, ignoredFailures);
+  }
+  
+  return {
+    orderId: job.data.orderId,
+    status: 'completed',
+    paymentProcessed: true,
+    optionalStepsCompleted: Object.keys(childrenValues).length - 1, // Exclude payment
+    optionalStepsFailed: Object.keys(ignoredFailures).length,
+  };
+});
+```
+
+## Use Cases
+
+<AccordionGroup>
+  <Accordion title="Optional Services with Monitoring">
+    Track which optional services failed while still completing the main workflow:
+
+    ```typescript
+    const flow = await flowProducer.add({
+      name: 'user-registration',
+      queueName: 'registration',
+      data: { email: 'user@example.com' },
+      children: [
+        {
+          name: 'create-account',
+          queueName: 'accounts',
+          data: {},
+          // Required
+        },
+        {
+          name: 'subscribe-newsletter',
+          queueName: 'newsletter',
+          data: {},
+          opts: { ignoreDependencyOnFailure: true },
+        },
+        {
+          name: 'setup-trial',
+          queueName: 'trials',
+          data: {},
+          opts: { ignoreDependencyOnFailure: true },
+        },
+        {
+          name: 'send-welcome-email',
+          queueName: 'emails',
+          data: {},
+          opts: { ignoreDependencyOnFailure: true },
+        },
+      ],
+    });
+
+    const registrationWorker = new Worker('registration', async job => {
+      const ignoredFailures = await job.getIgnoredChildrenFailures();
+      
+      // Complete registration even if optional steps failed
+      const result = {
+        email: job.data.email,
+        accountCreated: true,
+        optionalSteps: {
+          newsletter: !('newsletter' in ignoredFailures),
+          trial: !('trial' in ignoredFailures),
+          welcomeEmail: !('welcomeEmail' in ignoredFailures),
+        },
+      };
+      
+      // Alert if critical optional steps failed
+      if ('welcomeEmail' in ignoredFailures) {
+        await alertOps('Welcome email failed', ignoredFailures.welcomeEmail);
+      }
+      
+      return result;
+    });
+    ```
+  </Accordion>
+
+  <Accordion title="Data Processing with Optional Enrichments">
+    Process data with optional enrichment steps while tracking which enrichments failed:
+
+    ```typescript
+    const flow = await flowProducer.add({
+      name: 'process-lead',
+      queueName: 'leads',
+      data: { leadId: 'LEAD-456' },
+      children: [
+        {
+          name: 'validate-lead',
+          queueName: 'validation',
+          data: {},
+          // Required
+        },
+        {
+          name: 'enrich-company-data',
+          queueName: 'enrichment',
+          data: { source: 'clearbit' },
+          opts: { ignoreDependencyOnFailure: true },
+        },
+        {
+          name: 'enrich-social-data',
+          queueName: 'enrichment',
+          data: { source: 'linkedin' },
+          opts: { ignoreDependencyOnFailure: true },
+        },
+        {
+          name: 'score-lead',
+          queueName: 'scoring',
+          data: {},
+          opts: { ignoreDependencyOnFailure: true },
+        },
+      ],
+    });
+
+    const leadWorker = new Worker('leads', async job => {
+      const childrenValues = await job.getChildrenValues();
+      const ignoredFailures = await job.getIgnoredChildrenFailures();
+      
+      // Build lead profile with available data
+      const leadProfile = {
+        leadId: job.data.leadId,
+        validated: true,
+        companyData: childrenValues['enrich-company-data'] || null,
+        socialData: childrenValues['enrich-social-data'] || null,
+        score: childrenValues['score-lead'] || 'unscored',
+      };
+      
+      // Track enrichment success rate
+      await trackMetrics({
+        totalEnrichments: 3,
+        successfulEnrichments: 3 - Object.keys(ignoredFailures).length,
+        failedEnrichments: ignoredFailures,
+      });
+      
+      return leadProfile;
+    });
+    ```
+  </Accordion>
+
+  <Accordion title="Multi-Channel Notifications with Fallback">
+    Send notifications across multiple channels and track which channels failed:
+
+    ```typescript
+    const flow = await flowProducer.add({
+      name: 'send-alert',
+      queueName: 'alerts',
+      data: { alertId: 'ALERT-789', message: 'System warning' },
+      children: [
+        {
+          name: 'send-email',
+          queueName: 'notifications',
+          data: { channel: 'email' },
+          opts: { ignoreDependencyOnFailure: true },
+        },
+        {
+          name: 'send-sms',
+          queueName: 'notifications',
+          data: { channel: 'sms' },
+          opts: { ignoreDependencyOnFailure: true },
+        },
+        {
+          name: 'send-push',
+          queueName: 'notifications',
+          data: { channel: 'push' },
+          opts: { ignoreDependencyOnFailure: true },
+        },
+        {
+          name: 'send-slack',
+          queueName: 'notifications',
+          data: { channel: 'slack' },
+          opts: { ignoreDependencyOnFailure: true },
+        },
+      ],
+    });
+
+    const alertWorker = new Worker('alerts', async job => {
+      const childrenValues = await job.getChildrenValues();
+      const ignoredFailures = await job.getIgnoredChildrenFailures();
+      
+      const successfulChannels = Object.keys(childrenValues);
+      const failedChannels = Object.keys(ignoredFailures);
+      
+      if (successfulChannels.length === 0) {
+        // All channels failed - escalate
+        await escalateAlert(job.data.alertId, ignoredFailures);
+        throw new Error('All notification channels failed');
+      }
+      
+      return {
+        alertId: job.data.alertId,
+        status: 'sent',
+        successfulChannels,
+        failedChannels,
+        deliveryRate: `${successfulChannels.length}/${successfulChannels.length + failedChannels.length}`,
+      };
+    });
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Difference from removeDependencyOnFailure
+
+Understanding when to use `ignoreDependencyOnFailure` vs `removeDependencyOnFailure`:
+
+<CardGroup cols={2}>
+  <Card title="ignoreDependencyOnFailure" icon="eye-slash" color="#00aa88">
+    **Use when:**
+    - You need to track which children failed
+    - You want to log or monitor failures
+    - You need to make decisions based on failure information
+    - You want better observability
+    
+    **Behavior:**
+    - Keeps failed child in dependencies as "ignored"
+    - Can retrieve failure info with `getIgnoredChildrenFailures()`
+    - Better for debugging and monitoring
+  </Card>
+  
+  <Card title="removeDependencyOnFailure" icon="trash" color="#aa4400">
+    **Use when:**
+    - You don't need to track failures
+    - You want to completely forget about failed children
+    - You want simpler cleanup
+    - Failure information is not important
+    
+    **Behavior:**
+    - Completely removes failed child from dependencies
+    - Cannot retrieve failure information
+    - Cleaner but less observable
+  </Card>
+</CardGroup>
+
+## Monitoring Ignored Dependencies
+
+Track ignored dependencies for better observability:
+
+```typescript
+import { QueueEvents, Queue } from 'bullmq';
+
+const queue = new Queue('topQueueName', { connection });
+const queueEvents = new QueueEvents('topQueueName', { connection });
+
+queueEvents.on('completed', async ({ jobId }) => {
+  const job = await queue.getJob(jobId);
+  
+  // Check if job is a parent
+  const { ignored } = await job.getDependenciesCount({ ignored: true });
+  
+  if (ignored > 0) {
+    const ignoredFailures = await job.getIgnoredChildrenFailures();
+    console.log(`Job ${jobId} completed with ${ignored} ignored failures:`);
+    console.log(JSON.stringify(ignoredFailures, null, 2));
+    
+    // Send to monitoring system
+    await reportToMonitoring({
+      jobId,
+      ignoredCount: ignored,
+      failures: ignoredFailures,
+    });
+  }
+});
+```
+
+## Advanced Pattern: Retry Failed Optional Steps
+
+You can implement a pattern where the parent retries failed optional steps:
+
+```typescript
+const parentWorker = new Worker('topQueueName', async job => {
+  const ignoredFailures = await job.getIgnoredChildrenFailures();
+  
+  if (Object.keys(ignoredFailures).length > 0) {
+    // Try to retry failed optional steps
+    for (const [childKey, error] of Object.entries(ignoredFailures)) {
+      const [prefix, queueName, jobId] = childKey.split(':');
+      
+      // Add a retry job
+      await retryQueue.add('retry-optional', {
+        originalJobId: jobId,
+        queueName,
+        error,
+        parentJobId: job.id,
+      });
+    }
+    
+    console.log(`Queued ${Object.keys(ignoredFailures).length} optional steps for retry`);
+  }
+  
+  // Process with successful children
+  const childrenValues = await job.getChildrenValues();
+  return processResults(childrenValues);
+});
+```
+
+## Getting Dependency Counts
+
+You can check how many children were ignored:
+
+```typescript
+const { ignored, processed, failed, unprocessed } = 
+  await job.getDependenciesCount();
+
+console.log(`
+  Processed: ${processed}
+  Ignored: ${ignored}
+  Failed: ${failed}
+  Unprocessed: ${unprocessed}
+`);
+
+// Or get only ignored count
+const { ignored } = await job.getDependenciesCount({ ignored: true });
+```
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Always Check Ignored Failures" icon="magnifying-glass">
+    Use `getIgnoredChildrenFailures()` in parent processor to handle failure scenarios
+  </Card>
+  <Card title="Log for Observability" icon="chart-line">
+    Log ignored failures to monitoring systems for tracking and alerting
+  </Card>
+  <Card title="Use for Non-Critical Features" icon="circle-check">
+    Apply to features that enhance but aren't critical to the workflow
+  </Card>
+  <Card title="Consider Retry Logic" icon="rotate">
+    Implement retry mechanisms for failed optional steps when appropriate
+  </Card>
+</CardGroup>
+
+<Tip>
+  Use `ignoreDependencyOnFailure` instead of `removeDependencyOnFailure` when you need better observability. The ability to retrieve failure information is valuable for monitoring, debugging, and making informed decisions in the parent processor.
+</Tip>
+
+<Warning>
+  Even though failures are "ignored", they still represent errors in your system. Always log and monitor ignored failures to ensure optional features are working as expected.
+</Warning>
+
+## API Reference
+
+- [Add Flow API Reference](https://api.docs.bullmq.io/classes/v5.FlowProducer.html#add)
+- [Get Ignored Children Failures API Reference](https://api.docs.bullmq.io/classes/v5.Job.html#getignoredchildrenfailures)
+- [Get Dependencies Count API Reference](https://api.docs.bullmq.io/classes/v5.Job.html#getdependenciescount)
+- [FlowProducer API Reference](https://api.docs.bullmq.io/classes/v5.FlowProducer.html)
+- [Job API Reference](https://api.docs.bullmq.io/classes/v5.Job.html)

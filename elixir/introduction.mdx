@@ -1,0 +1,87 @@
+---
+title: Elixir
+description: BullMQ for Elixir - A powerful, fast, and robust job queue backed by Redis
+---
+
+BullMQ for Elixir is a full-featured job queue library that brings the power of BullMQ to the Elixir ecosystem. It's built with OTP principles using GenServers and Supervisors, providing a native Elixir experience.
+
+## Overview
+
+This is an Elixir port of the popular [BullMQ](https://bullmq.io) library for Node.js, providing full compatibility with existing BullMQ queues across all languages (Node.js, Python, and PHP).
+
+## Key Features
+
+- **High Performance** - Built on Redis for speed and reliability
+- **Automatic Retries** - Configurable retry strategies with exponential backoff
+- **Job Scheduling** - Delay jobs or schedule them with cron expressions
+- **Priority Queues** - Process important jobs first
+- **Rate Limiting** - Control processing rates per queue or per group
+- **Parent-Child Jobs** - Create complex workflows with job dependencies
+- **Real-time Events** - Subscribe to job lifecycle events via Worker callbacks or QueueEvents
+- **Reliable** - Stalled job detection and automatic recovery
+- **Observable** - Built-in Telemetry integration for monitoring
+- **OTP Native** - Built with GenServers and Supervisors following Elixir best practices
+- **Node.js Compatible** - Jobs can be shared between Elixir and Node.js workers
+
+## Requirements
+
+- Elixir 1.15 or higher
+- Erlang/OTP 26 or higher
+- Redis 6.0 or higher
+
+## Architecture
+
+BullMQ for Elixir follows OTP design principles:
+
+- **Workers** are GenServers that can be supervised
+- **QueueEvents** use Redis Streams for real-time event subscriptions
+- **JobSchedulers** manage repeatable/cron jobs
+- **FlowProducer** creates parent-child job dependencies
+- All components integrate with Elixir's supervision trees
+
+## Version
+
+Current version: **1.2.6**
+
+## Compatibility
+
+This library is fully compatible with the Node.js BullMQ library. Jobs can be added from Node.js and processed by Elixir workers, and vice versa. All implementations share the same Redis data structures and Lua scripts.
+
+## Use Cases
+
+Elixir BullMQ is ideal for:
+
+- Background job processing (emails, notifications, data processing)
+- Distributed task execution across multiple nodes
+- Cron-based job scheduling
+- Building resilient job pipelines with parent-child dependencies
+- Hybrid systems with jobs produced/consumed across Node.js, Python, PHP, and Elixir
+
+## Installation
+
+The library is available on [Hex](https://hex.pm/packages/bullmq):
+
+```elixir
+def deps do
+  [
+    {:bullmq, "~> 1.2"}
+  ]
+end
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/elixir/installation">
+    Get started with BullMQ for Elixir
+  </Card>
+  <Card title="Usage Guide" icon="code" href="/elixir/usage">
+    Learn how to add jobs, create workers, and more
+  </Card>
+  <Card title="Changelog" icon="clock-rotate-left" href="/elixir/changelog">
+    View release history and updates
+  </Card>
+  <Card title="HexDocs" icon="book" href="https://hexdocs.pm/bullmq">
+    Read the full API documentation
+  </Card>
+</CardGroup>

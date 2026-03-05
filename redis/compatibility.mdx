@@ -1,0 +1,48 @@
+---
+title: Redis Compatibility
+description: Learn about Redis compatibility requirements and alternatives for BullMQ
+---
+
+BullMQ is fully compatible with Redis version 6.2.0 or newer. While there are several alternatives to Redis available, not all of them work properly with BullMQ.
+
+This section presents the vendors that officially support BullMQ and that we regularly test to verify they remain compatible.
+
+## Compatibility Requirements
+
+To use BullMQ, you need:
+
+- **Redis version 6.2.0 or newer** - BullMQ requires specific Redis commands and features that are only available in these versions
+- **Full Redis compliance** - Redis alternatives must implement all Redis commands and behaviors that BullMQ depends on
+
+## Verified Compatible Solutions
+
+We maintain a list of Redis-compatible solutions that are regularly tested with BullMQ:
+
+<CardGroup cols={2}>
+  <Card title="Redis" icon="database" href="https://redis.io">
+    The original and most reliable option for BullMQ
+  </Card>
+  <Card title="Dragonfly" icon="dragon" href="/redis/dragonfly">
+    High-performance Redis alternative with multi-core support
+  </Card>
+</CardGroup>
+
+## Important Considerations
+
+<Warning>
+Not all Redis alternatives are compatible with BullMQ. Before choosing a Redis alternative, ensure it:
+- Supports Redis 6.2.0+ commands
+- Implements Lua scripting correctly
+- Handles transactions and locks properly
+</Warning>
+
+## Related Resources
+
+<CardGroup cols={2}>
+  <Card title="Redis Hosting Options" icon="server" href="/redis/hosting-aws-memorydb">
+    Learn about managed Redis hosting solutions
+  </Card>
+  <Card title="Going to Production" icon="rocket" href="/operations/going-to-production">
+    Production deployment best practices
+  </Card>
+</CardGroup>

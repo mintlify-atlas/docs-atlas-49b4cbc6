@@ -1,0 +1,143 @@
+---
+title: "Stop Retrying Jobs"
+description: "Use UnrecoverableError to prevent automatic retries"
+---
+
+When a processor throws an exception that is considered unrecoverable, you should use the `UnrecoverableError` class. In this case, BullMQ will just move the job to the failed set without performing any retries, overriding any `attempts` settings used when adding the job to the queue.
+
+## Basic Usage
+
+```typescript
+import { Worker, UnrecoverableError } from 'bullmq';
+
+const worker = new Worker(
+  'foo',
+  async job => {
+    doSomeProcessing();
+    throw new UnrecoverableError('Unrecoverable');
+  },
+  { connection },
+);
+
+await queue.add(
+  'test-retry',
+  { foo: 'bar' },
+  {
+    attempts: 3,
+    backoff: 1000,
+  },
+);
+```
+
+Even though the job is configured with 3 attempts, throwing `UnrecoverableError` will cause it to fail immediately without any retries.
+
+## When to Use UnrecoverableError
+
+<CardGroup cols={2}>
+  <Card title="Invalid Input" icon="triangle-exclamation">
+    The job data is malformed or invalid and will never succeed
+  </Card>
+  <Card title="Missing Resources" icon="file-slash">
+    A required file or resource doesn't exist and won't appear later
+  </Card>
+  <Card title="Business Logic Failure" icon="ban">
+    The operation violates business rules and shouldn't be retried
+  </Card>
+  <Card title="Authorization Errors" icon="lock">
+    Permanent authorization failures that won't resolve with retries
+  </Card>
+</CardGroup>
+
+## Fail Job with Manual Rate Limit
+
+When a job is rate limited using `RateLimitError` and tried again, the `attempts` check is ignored, as rate limiting is not considered a real error. However, if you want to manually check the attempts and avoid retrying the job, you can check `job.attemptsStarted`:
+
+```typescript
+import { Worker, RateLimitError, UnrecoverableError } from 'bullmq';
+
+const worker = new Worker(
+  'myQueue',
+  async job => {
+    const [isRateLimited, duration] = await doExternalCall();
+    if (isRateLimited) {
+      await queue.rateLimit(duration);
+      if (job.attemptsStarted >= job.opts.attempts) {
+        throw new UnrecoverableError('Unrecoverable');
+      }
+      // Do not forget to throw this special exception,
+      // since we must differentiate this case from a failure
+      // in order to move the job to wait again.
+      throw new RateLimitError();
+    }
+  },
+  {
+    connection,
+    limiter: {
+      max: 1,
+      duration: 500,
+    },
+  },
+);
+```
+
+<Info>
+`job.attemptsMade` is increased when any error different than `RateLimitError`, `DelayedError` or `WaitingChildrenError` is thrown. While `job.attemptsStarted` is increased every time that a job is moved to active.
+</Info>
+
+## Example: Validation Failure
+
+```typescript
+import { Worker, UnrecoverableError } from 'bullmq';
+import Joi from 'joi';
+
+const schema = Joi.object({
+  email: Joi.string().email().required(),
+  name: Joi.string().min(2).required(),
+});
+
+const worker = new Worker(
+  'user-registration',
+  async job => {
+    // Validate job data
+    const { error } = schema.validate(job.data);
+    
+    if (error) {
+      // Invalid data - no point in retrying
+      throw new UnrecoverableError(
+        `Invalid job data: ${error.message}`
+      );
+    }
+    
+    // Process valid job
+    await registerUser(job.data);
+  },
+  { connection },
+);
+```
+
+## Comparison: Error Types
+
+| Error Type | Behavior | Use Case |
+|------------|----------|----------|
+| `Error` | Job retries with backoff | Temporary failures |
+| `UnrecoverableError` | Job fails immediately | Permanent failures |
+| `RateLimitError` | Job waits, then retries | Rate limit hit |
+| `DelayedError` | Job delays, then retries | Manual delay needed |
+| `WaitingChildrenError` | Job waits for children | Parent-child dependencies |
+
+## Related Resources
+
+<CardGroup cols={2}>
+  <Card title="Retrying Failed Jobs" icon="rotate-right" href="/advanced/retrying-failing-jobs">
+    Learn about retry strategies and backoff
+  </Card>
+  <Card title="UnrecoverableError API" icon="code" href="/api/errors/unrecoverable-error">
+    API reference for UnrecoverableError
+  </Card>
+  <Card title="Rate Limiting" icon="gauge" href="/advanced/rate-limiting">
+    Implement rate limiting for your queues
+  </Card>
+  <Card title="Rate Limit API" icon="code" href="/api/queue#ratelimit">
+    API reference for queue.rateLimit
+  </Card>
+</CardGroup>

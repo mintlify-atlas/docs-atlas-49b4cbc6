@@ -1,0 +1,187 @@
+---
+title: AWS ElastiCache
+description: Configure AWS ElastiCache for Redis to work with BullMQ
+---
+
+ElastiCache is a managed caching service offered by Amazon Web Services (AWS), and it can be a good option when using BullMQ within the AWS infrastructure.
+
+## Important Requirements
+
+<Warning>
+**Critical Configuration Requirements:**
+- Use the **standard cache-nodes setup** (not serverless)
+- Set `maxmemory-policy` to **`noeviction`**
+- Configure proper **security groups** for network access
+</Warning>
+
+<Info>
+The serverless version of ElastiCache currently uses an incompatible maxmemory-policy and cannot be used with BullMQ.
+</Info>
+
+## Setup Guide
+
+<Steps>
+  <Step title="Create a Security Group">
+    Create a security group that allows your BullMQ services to access ElastiCache.
+    
+    1. Go to EC2 > Security Groups
+    2. Click "Create Security Group"
+    3. Add an **Inbound rule**:
+       - Type: Custom TCP
+       - Port range: 6379
+       - Source: Choose based on your needs (for testing, "Anywhere" works, but use specific security groups in production)
+    
+    <Note>
+    The cluster will not be accessible outside AWS regardless of the security group configuration.
+    </Note>
+  </Step>
+  
+  <Step title="Create a Custom Parameter Group">
+    You need to create a custom parameter group to set the correct `maxmemory-policy`.
+    
+    1. Go to **ElastiCache > Parameter Groups**
+    2. Click **"Create"**
+    3. Fill in:
+       - **Name**: e.g., `bullmq-params`
+       - **Description**: e.g., `Parameters for BullMQ`
+       - **Family**: `redis7` (or latest available)
+    4. Click **"Create"**
+  </Step>
+  
+  <Step title="Configure maxmemory-policy">
+    Update the parameter group to use `noeviction` policy.
+    
+    1. Find your parameter group in the list
+    2. Click **"Edit parameter values"**
+    3. Search for **`maxmemory-policy`**
+    4. Change the value to **`noeviction`**
+    5. Click **"Save changes"**
+    
+    <Warning>
+    This is critical! BullMQ cannot work properly if Redis evicts keys arbitrarily. The `noeviction` policy ensures Redis will refuse write operations instead of removing keys when memory is full.
+    </Warning>
+  </Step>
+  
+  <Step title="Create or Modify ElastiCache Cluster">
+    Create a new cluster or modify an existing one to use your custom parameter group.
+    
+    **For new clusters:**
+    1. Go to **ElastiCache > Redis clusters**
+    2. Click **"Create"**
+    3. Choose **standard cache** (not serverless)
+    4. Select your **custom parameter group**
+    5. Attach your **security group**
+    
+    **For existing clusters:**
+    1. Find your cluster
+    2. Click **"Modify"**
+    3. Go to **Cluster settings**
+    4. Change the **Parameter group** to your custom group
+    5. Preview changes and **"Modify"**
+  </Step>
+  
+  <Step title="Attach Security Group">
+    Attach the security group to:
+    - Your ElastiCache cluster
+    - The EC2 instances or services that need to access it
+  </Step>
+</Steps>
+
+## Connection Example
+
+Once your ElastiCache cluster is configured, connect to it using BullMQ:
+
+```typescript
+import { Queue, Worker } from 'bullmq';
+
+const connection = {
+  host: 'your-elasticache-endpoint.cache.amazonaws.com',
+  port: 6379,
+};
+
+// Create queue
+const queue = new Queue('myqueue', { connection });
+
+// Create worker
+const worker = new Worker(
+  'myqueue',
+  async (job) => {
+    console.log('Processing job:', job.id);
+    // Process your job
+  },
+  { connection }
+);
+```
+
+## Verification Checklist
+
+Before using ElastiCache in production, verify:
+
+<AccordionGroup>
+  <Accordion title="Security Configuration">
+    - [ ] Security group allows inbound connections on port 6379
+    - [ ] Security group is attached to ElastiCache cluster
+    - [ ] Security group is attached to your application instances
+  </Accordion>
+  
+  <Accordion title="Parameter Configuration">
+    - [ ] Created custom parameter group
+    - [ ] Set `maxmemory-policy` to `noeviction`
+    - [ ] Applied parameter group to cluster
+  </Accordion>
+  
+  <Accordion title="Cluster Configuration">
+    - [ ] Using standard cache (not serverless)
+    - [ ] Redis version 6.2.0 or newer
+    - [ ] Cluster is in the correct VPC
+  </Accordion>
+</AccordionGroup>
+
+## Cluster Mode vs Standard Mode
+
+<Tabs>
+  <Tab title="Standard Mode (Recommended for Simplicity)">
+    Use standard mode for simpler setups:
+    
+    ```typescript
+    import { Queue, Worker } from 'bullmq';
+    
+    const connection = {
+      host: 'your-cluster.cache.amazonaws.com',
+      port: 6379,
+    };
+    
+    const queue = new Queue('myqueue', { connection });
+    ```
+  </Tab>
+  
+  <Tab title="Cluster Mode (For High Availability)">
+    If using cluster mode, use IORedis Cluster:
+    
+    ```typescript
+    import { Cluster } from 'ioredis';
+    import { Queue, Worker } from 'bullmq';
+    
+    const connection = new Cluster([
+      {
+        host: 'your-cluster.cache.amazonaws.com',
+        port: 6379,
+      },
+    ]);
+    
+    // Use hash tags in queue names
+    const queue = new Queue('{myqueue}', { connection });
+    ```
+  </Tab>
+</Tabs>
+
+## Related Resources
+
+<CardGroup cols={2}>
+  <Card title="AWS MemoryDB" icon="database" href="/redis/hosting-aws-memorydb">
+    Alternative AWS managed Redis option with different features
+  </Card>
+  <Card title="Going to Production" icon="rocket" href="/operations/going-to-production">
+    Production deployment best practices
+  </Card>
+</CardGroup>

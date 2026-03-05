@@ -1,0 +1,136 @@
+---
+title: "Job IDs"
+description: "Control job uniqueness with custom identifiers"
+---
+
+## Overview
+
+All jobs in BullMQ need a unique job ID. This ID is used to construct a key for storing data in Redis and serves as a pointer to the job as it moves between different states during its lifetime.
+
+<Info>
+The uniqueness requirement is scoped by queue. You can have the same job ID in different queues without issues. The counter for automatically generated IDs is also scoped by queue.
+</Info>
+
+## Automatic IDs
+
+By default, job IDs are generated automatically as an increasing counter:
+
+```typescript
+import { Queue } from 'bullmq';
+
+const myQueue = new Queue('Paint');
+
+// Job will get an auto-generated ID like "1", "2", "3", etc.
+const job = await myQueue.add('wall', { color: 'pink' });
+console.log(job.id); // "1"
+```
+
+## Custom IDs
+
+The main reason to specify a custom ID is to avoid duplicated jobs. Since IDs must be unique, adding a job with an existing ID will be ignored and not added to the queue.
+
+```typescript
+await myQueue.add(
+  'wall',
+  { color: 'pink' },
+  {
+    jobId: customJobId,
+  },
+);
+```
+
+<Warning>
+Jobs removed from the queue (either manually or via `removeOnComplete`/`removeOnFail`) will **not** be considered duplicates. You can add the same job ID many times as long as the previous job has been removed.
+</Warning>
+
+### Custom ID Restrictions
+
+From `src/classes/job.ts:1582`:
+
+```typescript
+if (this.opts?.jobId) {
+  // Custom Id cannot be integers
+  if (`${parseInt(this.opts.jobId, 10)}` === this.opts?.jobId) {
+    throw new Error('Custom Id cannot be integers');
+  }
+
+  // Custom Id cannot contain ':'
+  if (
+    this.opts?.jobId.includes(':') &&
+    this.opts?.jobId?.split(':').length !== 3
+  ) {
+    throw new Error('Custom Id cannot contain :');
+  }
+}
+```
+
+<Warning>
+Custom job IDs must not:
+- Be pure integers (e.g., "123" is invalid, but "job-123" is valid)
+- Contain the `:` separator (as it conflicts with Redis naming conventions)
+
+Use different separators like `-` or `_` instead.
+</Warning>
+
+## Duplicate Detection
+
+When you attempt to add a job with an existing ID, BullMQ will:
+1. Check if the ID already exists
+2. Ignore the new job
+3. Emit a `duplicated` event via QueueEvents
+
+```typescript
+import { QueueEvents } from 'bullmq';
+
+const queueEvents = new QueueEvents('Paint');
+
+queueEvents.on('duplicated', ({ jobId }) => {
+  console.log(`Job ${jobId} was not added because it already exists`);
+});
+
+// First job is added
+await myQueue.add('wall', { color: 'pink' }, { jobId: 'paint-1' });
+
+// Second job is ignored and 'duplicated' event is emitted
+await myQueue.add('wall', { color: 'blue' }, { jobId: 'paint-1' });
+```
+
+## Job Options Interface
+
+From `src/interfaces/base-job-options.ts:98`:
+
+```typescript
+interface BaseJobOptions {
+  /**
+   * Override the job ID - by default, the job ID is a unique
+   * integer, but you can use this setting to override it.
+   * If you use this option, it is up to you to ensure the
+   * jobId is unique. If you attempt to add a job with an id that
+   * already exists, it will not be added.
+   */
+  jobId?: string;
+}
+```
+
+## Use Cases
+
+Custom job IDs are useful for:
+- **Preventing duplicate submissions**: Use user ID + action as the job ID
+- **Idempotent operations**: Ensure an operation runs only once
+- **Job tracking**: Use meaningful IDs that correspond to your business logic
+
+```typescript
+// Example: Prevent duplicate password reset emails
+const userId = '12345';
+const jobId = `password-reset-${userId}`;
+
+await emailQueue.add(
+  'sendPasswordReset',
+  { userId, email: user.email },
+  { jobId }
+);
+```
+
+<Card title="API Reference" icon="book" href="https://api.docs.bullmq.io/interfaces/v5.QueueEventsListener.html#duplicated">
+  View the Duplicated Event API Reference
+</Card>

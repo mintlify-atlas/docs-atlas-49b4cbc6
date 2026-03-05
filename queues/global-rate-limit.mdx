@@ -1,0 +1,379 @@
+---
+title: 'Global Rate Limit'
+description: 'Control the maximum number of jobs processed within a time period across all workers'
+---
+
+Global rate limiting is a queue-level setting that determines the maximum number of jobs that can be processed within a specific time period across **all** worker instances.
+
+## Setting Global Rate Limit
+
+Use the `setGlobalRateLimit` method to configure rate limiting:
+
+### Method Signature
+
+```typescript
+async setGlobalRateLimit(max: number, duration: number): Promise<void>
+```
+
+<ParamField path="max" type="number" required>
+  Maximum number of jobs to process in the time period specified by `duration`
+</ParamField>
+
+<ParamField path="duration" type="number" required>
+  Time period in milliseconds. During this time, a maximum of `max` jobs will be processed.
+</ParamField>
+
+### Example
+
+<CodeGroup>
+```typescript TypeScript
+import { Queue } from 'bullmq';
+
+const queue = new Queue('api-calls');
+
+// Allow 1 job per second
+await queue.setGlobalRateLimit(1, 1000);
+
+// Allow 100 jobs per minute
+await queue.setGlobalRateLimit(100, 60000);
+
+// Allow 1000 jobs per hour
+await queue.setGlobalRateLimit(1000, 3600000);
+```
+
+```javascript JavaScript
+const { Queue } = require('bullmq');
+
+const queue = new Queue('api-calls');
+
+// Allow 1 job per second
+await queue.setGlobalRateLimit(1, 1000);
+
+// Allow 100 jobs per minute
+await queue.setGlobalRateLimit(100, 60000);
+```
+</CodeGroup>
+
+## Getting Global Rate Limit
+
+Retrieve the current rate limit configuration:
+
+<CodeGroup>
+```typescript TypeScript
+const { max, duration } = await queue.getGlobalRateLimit();
+console.log(`Rate limit: ${max} jobs per ${duration}ms`);
+```
+
+```javascript JavaScript
+const { max, duration } = await queue.getGlobalRateLimit();
+console.log(`Rate limit: ${max} jobs per ${duration}ms`);
+```
+</CodeGroup>
+
+## Getting Rate Limit TTL
+
+Check how much time remains until the rate limit window resets:
+
+<CodeGroup>
+```typescript TypeScript
+const ttl = await queue.getRateLimitTtl();
+console.log(`Rate limit resets in ${ttl}ms`);
+```
+
+```javascript JavaScript
+const ttl = await queue.getRateLimitTtl();
+console.log(`Rate limit resets in ${ttl}ms`);
+```
+</CodeGroup>
+
+## Removing Global Rate Limit
+
+Remove the rate limit, allowing unlimited job processing:
+
+<CodeGroup>
+```typescript TypeScript
+await queue.removeGlobalRateLimit();
+console.log('Rate limit removed');
+```
+
+```javascript JavaScript
+await queue.removeGlobalRateLimit();
+console.log('Rate limit removed');
+```
+</CodeGroup>
+
+## How It Works
+
+### Global vs Worker Rate Limits
+
+BullMQ supports rate limiting at both the worker and queue level:
+
+**Worker-level rate limit** (per worker instance):
+```typescript
+import { Worker } from 'bullmq';
+
+const worker = new Worker(
+  'tasks',
+  async job => {
+    // Process job
+  },
+  {
+    limiter: {
+      max: 10,      // 10 jobs
+      duration: 1000 // per second
+    }
+  }
+);
+```
+
+**Global rate limit** (across all workers):
+```typescript
+import { Queue } from 'bullmq';
+
+const queue = new Queue('tasks');
+
+// All workers combined: 10 jobs per second
+await queue.setGlobalRateLimit(10, 1000);
+```
+
+<Info>
+  Worker-level rate limits do **not** override the global rate limit. The global limit is always enforced across all workers.
+</Info>
+
+## Practical Examples
+
+### Example 1: External API Rate Limits
+
+Many APIs enforce rate limits. Use global rate limiting to respect them:
+
+```typescript
+import { Queue, Worker } from 'bullmq';
+
+const queue = new Queue('github-api');
+
+// GitHub API: 5000 requests per hour
+await queue.setGlobalRateLimit(5000, 3600000);
+
+const worker = new Worker('github-api', async job => {
+  const response = await fetch('https://api.github.com/users/' + job.data.username);
+  return response.json();
+});
+```
+
+### Example 2: Email Service Rate Limits
+
+```typescript
+import { Queue, Worker } from 'bullmq';
+
+const queue = new Queue('emails');
+
+// SendGrid free tier: 100 emails per day
+await queue.setGlobalRateLimit(100, 86400000);
+
+const worker = new Worker('emails', async job => {
+  await sendEmail({
+    to: job.data.to,
+    subject: job.data.subject,
+    body: job.data.body
+  });
+});
+```
+
+### Example 3: Database Rate Limiting
+
+Protect your database from overload:
+
+```typescript
+import { Queue, Worker } from 'bullmq';
+
+const queue = new Queue('db-writes');
+
+// Limit to 1000 writes per minute
+await queue.setGlobalRateLimit(1000, 60000);
+
+const worker = new Worker('db-writes', async job => {
+  await db.insert(job.data);
+});
+```
+
+### Example 4: Burst Protection
+
+Handle traffic spikes gracefully:
+
+```typescript
+import { Queue, Worker } from 'bullmq';
+
+const queue = new Queue('notifications');
+
+// Allow bursts, but limit average rate
+// 100 jobs per 10 seconds = 600 jobs/minute average
+await queue.setGlobalRateLimit(100, 10000);
+
+const worker = new Worker('notifications', async job => {
+  await sendNotification(job.data);
+});
+```
+
+## Temporary Rate Limit Override
+
+You can temporarily override the rate limit using the `rateLimit` method:
+
+```typescript
+import { Queue } from 'bullmq';
+
+const queue = new Queue('tasks');
+
+// Normal rate: 100 jobs per minute
+await queue.setGlobalRateLimit(100, 60000);
+
+// Temporarily pause processing for 30 seconds
+await queue.rateLimit(30000);
+
+// After 30 seconds, normal rate limiting resumes
+```
+
+<Info>
+  The `rateLimit` method sets a temporary override that expires after the specified time.
+</Info>
+
+## Combining Rate Limit and Concurrency
+
+You can use both global concurrency and rate limiting together:
+
+```typescript
+import { Queue, Worker } from 'bullmq';
+
+const queue = new Queue('tasks');
+
+// Max 5 concurrent jobs
+await queue.setGlobalConcurrency(5);
+
+// Max 100 jobs per minute
+await queue.setGlobalRateLimit(100, 60000);
+
+// This ensures:
+// 1. Never more than 5 jobs running at once
+// 2. Never more than 100 jobs processed per minute
+```
+
+## Dynamic Rate Limiting
+
+Adjust rate limits based on external factors:
+
+```typescript
+import { Queue } from 'bullmq';
+
+const queue = new Queue('api-calls');
+
+// Check API quota and adjust rate limit
+async function adjustRateLimit() {
+  const quota = await checkApiQuota();
+  
+  if (quota.remaining < 1000) {
+    // Slow down when quota is low
+    await queue.setGlobalRateLimit(10, 1000);
+    console.log('Low quota - reduced rate limit');
+  } else {
+    // Normal rate when quota is healthy
+    await queue.setGlobalRateLimit(100, 1000);
+    console.log('Normal quota - standard rate limit');
+  }
+}
+
+// Adjust every 5 minutes
+setInterval(adjustRateLimit, 300000);
+```
+
+## Monitoring Rate Limits
+
+Check the current rate limit status:
+
+```typescript
+import { Queue } from 'bullmq';
+
+const queue = new Queue('tasks');
+
+// Get rate limit configuration
+const { max, duration } = await queue.getGlobalRateLimit();
+console.log(`Limit: ${max} jobs per ${duration}ms`);
+
+// Get remaining time in current window
+const ttl = await queue.getRateLimitTtl();
+if (ttl > 0) {
+  console.log(`Rate limit active - resets in ${ttl}ms`);
+} else {
+  console.log('Rate limit window available');
+}
+
+// Get queue metadata including rate limit
+const meta = await queue.getMeta();
+console.log('Meta:', meta);
+```
+
+## Use Cases
+
+### When to Use Global Rate Limiting
+
+- External API rate limits (GitHub, Stripe, SendGrid, etc.)
+- Database query quotas
+- Third-party service limits
+- Cost control (pay-per-request services)
+- Infrastructure protection
+- Compliance requirements
+
+### When NOT to Use Global Rate Limiting
+
+- Jobs are completely independent
+- You want maximum throughput
+- No external rate limits exist
+- Cost is not a concern
+
+## Common Patterns
+
+### Pattern 1: Tiered Rate Limits
+
+```typescript
+// Different rate limits for different job types
+const urgentQueue = new Queue('urgent');
+await urgentQueue.setGlobalRateLimit(1000, 60000); // Fast
+
+const normalQueue = new Queue('normal');
+await normalQueue.setGlobalRateLimit(100, 60000); // Medium
+
+const batchQueue = new Queue('batch');
+await batchQueue.setGlobalRateLimit(10, 60000); // Slow
+```
+
+### Pattern 2: Time-of-Day Rate Limits
+
+```typescript
+import { Queue } from 'bullmq';
+
+const queue = new Queue('tasks');
+
+function adjustForTimeOfDay() {
+  const hour = new Date().getHours();
+  
+  if (hour >= 9 && hour < 17) {
+    // Business hours - reduce load
+    queue.setGlobalRateLimit(50, 60000);
+  } else {
+    // Off hours - full speed
+    queue.setGlobalRateLimit(500, 60000);
+  }
+}
+
+// Adjust every hour
+setInterval(adjustForTimeOfDay, 3600000);
+adjustForTimeOfDay(); // Set initial rate
+```
+
+## Related
+
+- [Global Concurrency](/queues/global-concurrency)
+- [Metadata](/queues/metadata)
+- [Queue API Reference](https://api.docs.bullmq.io/classes/v5.Queue.html)
+- [Set Global Rate Limit API Reference](https://api.docs.bullmq.io/classes/v5.Queue.html#setglobalratelimit)
+- [Get Global Rate Limit API Reference](https://api.docs.bullmq.io/classes/v5.Queue.html#getglobalratelimit)
+- [Get Rate Limit TTL API Reference](https://api.docs.bullmq.io/classes/v5.Queue.html#getratelimitttl)
+- [Remove Global Rate Limit API Reference](https://api.docs.bullmq.io/classes/v5.Queue.html#removeglobalratelimit)

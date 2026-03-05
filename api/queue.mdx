@@ -1,0 +1,315 @@
+---
+title: 'Queue'
+description: 'Main class for adding jobs to a queue and managing queue operations'
+---
+
+## Overview
+
+The Queue class provides methods to add jobs to a queue and perform high-level queue administration such as pausing or deleting queues.
+
+## Constructor
+
+```typescript
+new Queue(name: string, opts?: QueueOptions)
+```
+
+<ParamField path="name" type="string" required>
+  The name of the queue
+</ParamField>
+
+<ParamField path="opts" type="QueueOptions">
+  Configuration options for the queue
+</ParamField>
+
+## Example
+
+```typescript
+import { Queue } from 'bullmq';
+
+const queue = new Queue('myQueue', {
+  connection: {
+    host: 'localhost',
+    port: 6379,
+  },
+});
+```
+
+## Methods
+
+### add
+
+Adds a new job to the queue.
+
+```typescript
+add(name: string, data: any, opts?: JobsOptions): Promise<Job>
+```
+
+<ParamField path="name" type="string" required>
+  Name of the job
+</ParamField>
+
+<ParamField path="data" type="any" required>
+  Arbitrary data to append to the job
+</ParamField>
+
+<ParamField path="opts" type="JobsOptions">
+  Job options that affect how the job is processed
+</ParamField>
+
+<ResponseField name="job" type="Job">
+  The created job instance
+</ResponseField>
+
+### addBulk
+
+Adds an array of jobs to the queue atomically.
+
+```typescript
+addBulk(jobs: Array<{ name: string; data: any; opts?: JobsOptions }>): Promise<Job[]>
+```
+
+<ParamField path="jobs" type="Array" required>
+  Array of job objects with name, data, and opts properties
+</ParamField>
+
+<ResponseField name="jobs" type="Job[]">
+  Array of created job instances
+</ResponseField>
+
+### pause
+
+Pauses the processing of this queue globally.
+
+```typescript
+pause(): Promise<void>
+```
+
+### resume
+
+Resumes the processing of this queue globally.
+
+```typescript
+resume(): Promise<void>
+```
+
+### isPaused
+
+Returns true if the queue is currently paused.
+
+```typescript
+isPaused(): Promise<boolean>
+```
+
+### getJob
+
+Fetches a job by its ID.
+
+```typescript
+getJob(jobId: string): Promise<Job | undefined>
+```
+
+<ParamField path="jobId" type="string" required>
+  The job ID to fetch
+</ParamField>
+
+### getJobs
+
+Returns jobs on the given statuses.
+
+```typescript
+getJobs(types?: JobType[], start?: number, end?: number, asc?: boolean): Promise<Job[]>
+```
+
+<ParamField path="types" type="JobType[]">
+  Job statuses to retrieve (e.g., 'waiting', 'active', 'completed')
+</ParamField>
+
+<ParamField path="start" type="number" default="0">
+  Zero-based index from where to start returning jobs
+</ParamField>
+
+<ParamField path="end" type="number" default="-1">
+  Zero-based index where to stop returning jobs
+</ParamField>
+
+<ParamField path="asc" type="boolean" default="false">
+  If true, jobs will be returned in ascending order
+</ParamField>
+
+### getJobCounts
+
+Returns the job counts for each type specified.
+
+```typescript
+getJobCounts(...types: JobType[]): Promise<{ [index: string]: number }>
+```
+
+### clean
+
+Cleans jobs from a queue within a certain grace period.
+
+```typescript
+clean(grace: number, limit: number, type?: string): Promise<string[]>
+```
+
+<ParamField path="grace" type="number" required>
+  The grace period in milliseconds
+</ParamField>
+
+<ParamField path="limit" type="number" required>
+  Max number of jobs to clean
+</ParamField>
+
+<ParamField path="type" type="string" default="'completed'">
+  The type of job to clean: 'completed', 'wait', 'active', 'paused', 'delayed', or 'failed'
+</ParamField>
+
+### drain
+
+Drains the queue, removing all jobs that are waiting or delayed.
+
+```typescript
+drain(delayed?: boolean): Promise<void>
+```
+
+<ParamField path="delayed" type="boolean" default="false">
+  If true, also clean delayed jobs
+</ParamField>
+
+### obliterate
+
+Completely destroys the queue and all of its contents irreversibly.
+
+```typescript
+obliterate(opts?: { force?: boolean; count?: number }): Promise<void>
+```
+
+<ParamField path="opts.force" type="boolean" default="false">
+  Force obliteration even with active jobs in the queue
+</ParamField>
+
+<ParamField path="opts.count" type="number" default="1000">
+  Maximum number of deleted keys per iteration
+</ParamField>
+
+### remove
+
+Removes a job from the queue.
+
+```typescript
+remove(jobId: string, opts?: { removeChildren?: boolean }): Promise<number>
+```
+
+<ParamField path="jobId" type="string" required>
+  The ID of the job to remove
+</ParamField>
+
+<ParamField path="opts.removeChildren" type="boolean" default="true">
+  Whether to remove child jobs
+</ParamField>
+
+### setGlobalConcurrency
+
+Enables and sets global concurrency value.
+
+```typescript
+setGlobalConcurrency(concurrency: number): Promise<void>
+```
+
+<ParamField path="concurrency" type="number" required>
+  Maximum number of simultaneous jobs that workers can handle
+</ParamField>
+
+### removeGlobalConcurrency
+
+Removes the global concurrency limit.
+
+```typescript
+removeGlobalConcurrency(): Promise<void>
+```
+
+### setGlobalRateLimit
+
+Enables and sets rate limit.
+
+```typescript
+setGlobalRateLimit(max: number, duration: number): Promise<void>
+```
+
+<ParamField path="max" type="number" required>
+  Max number of jobs to process in the time period
+</ParamField>
+
+<ParamField path="duration" type="number" required>
+  Time in milliseconds for the rate limit period
+</ParamField>
+
+### removeGlobalRateLimit
+
+Removes global rate limit.
+
+```typescript
+removeGlobalRateLimit(): Promise<void>
+```
+
+### upsertJobScheduler
+
+Upserts a job scheduler for creating jobs at intervals.
+
+```typescript
+upsertJobScheduler(
+  jobSchedulerId: string,
+  repeatOpts: RepeatOptions,
+  jobTemplate?: { name?: string; data?: any; opts?: JobsOptions }
+): Promise<Job>
+```
+
+<ParamField path="jobSchedulerId" type="string" required>
+  Unique identifier for the job scheduler
+</ParamField>
+
+<ParamField path="repeatOpts" type="RepeatOptions" required>
+  Repeat configuration options
+</ParamField>
+
+<ParamField path="jobTemplate" type="object">
+  Template for jobs created by this scheduler
+</ParamField>
+
+### getJobSchedulers
+
+Get all job schedulers.
+
+```typescript
+getJobSchedulers(start?: number, end?: number, asc?: boolean): Promise<JobSchedulerJson[]>
+```
+
+### removeJobScheduler
+
+Removes a job scheduler.
+
+```typescript
+removeJobScheduler(jobSchedulerId: string): Promise<boolean>
+```
+
+### close
+
+Closes the queue instance.
+
+```typescript
+close(): Promise<void>
+```
+
+## Events
+
+The Queue class extends EventEmitter and emits the following events:
+
+- `waiting` - A job has been added to the queue
+- `progress` - A job's progress has been updated
+- `completed` - A job has completed successfully
+- `failed` - A job has failed
+- `paused` - The queue has been paused
+- `resumed` - The queue has been resumed
+- `removed` - A job has been removed
+- `cleaned` - Jobs have been cleaned from the queue
+- `error` - An error occurred

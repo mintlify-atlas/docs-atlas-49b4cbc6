@@ -1,0 +1,403 @@
+---
+title: Quick Start
+description: Get up and running with BullMQ in minutes
+---
+
+This guide will help you create your first queue and worker with BullMQ. By the end, you'll have a working example that adds jobs to a queue and processes them.
+
+## Prerequisites
+
+Make sure you have:
+
+- Installed BullMQ (see [Installation](/installation))
+- Redis running locally or accessible remotely
+
+## Basic Example
+
+Let's build a simple job queue system. We'll create a queue that processes "paint" jobs.
+
+<Steps>
+
+### Create a Queue
+
+First, create a queue that will hold your jobs:
+
+```typescript producer.ts
+import { Queue } from 'bullmq';
+
+// Create a new queue named 'paint'
+const paintQueue = new Queue('paint');
+
+// Add jobs to the queue
+async function addJobs() {
+  await paintQueue.add('cars', { color: 'blue' });
+  await paintQueue.add('cars', { color: 'red' });
+  await paintQueue.add('bikes', { color: 'green' });
+  
+  console.log('Jobs added to the queue');
+}
+
+addJobs();
+```
+
+### Create a Worker
+
+Now create a worker that will process the jobs:
+
+```typescript worker.ts
+import { Worker, Job } from 'bullmq';
+
+// Create a worker that processes jobs from the 'paint' queue
+const worker = new Worker('paint', async (job: Job) => {
+  console.log(`Processing job ${job.id} of type ${job.name}`);
+  
+  // Simulate painting
+  if (job.name === 'cars') {
+    await paintCar(job.data.color);
+  } else if (job.name === 'bikes') {
+    await paintBike(job.data.color);
+  }
+  
+  // Return a value that will be stored in the job
+  return { painted: true, color: job.data.color };
+});
+
+// Mock painting functions
+async function paintCar(color: string) {
+  console.log(`Painting car ${color}...`);
+  await new Promise(resolve => setTimeout(resolve, 1000));
+  console.log(`Car painted ${color}!`);
+}
+
+async function paintBike(color: string) {
+  console.log(`Painting bike ${color}...`);
+  await new Promise(resolve => setTimeout(resolve, 500));
+  console.log(`Bike painted ${color}!`);
+}
+
+// Listen to worker events
+worker.on('completed', (job: Job) => {
+  console.log(`Job ${job.id} completed!`);
+});
+
+worker.on('failed', (job: Job | undefined, err: Error) => {
+  console.log(`Job ${job?.id} failed with error ${err.message}`);
+});
+
+console.log('Worker started, waiting for jobs...');
+```
+
+### Run the Example
+
+Open two terminal windows:
+
+**Terminal 1 - Start the worker:**
+```bash
+node worker.ts
+# or with TypeScript
+npx tsx worker.ts
+```
+
+**Terminal 2 - Add jobs:**
+```bash
+node producer.ts
+# or with TypeScript
+npx tsx producer.ts
+```
+
+You should see the worker processing the jobs!
+
+</Steps>
+
+## Configuration Options
+
+Both Queue and Worker accept connection options:
+
+```typescript
+import { Queue, Worker } from 'bullmq';
+
+const connection = {
+  host: 'localhost',
+  port: 6379,
+};
+
+const queue = new Queue('paint', { connection });
+
+const worker = new Worker('paint', async (job) => {
+  // Process job
+}, { connection });
+```
+
+<Tip>
+If you don't specify connection options, BullMQ defaults to `localhost:6379`.
+</Tip>
+
+## Listening to Job Events
+
+BullMQ provides two ways to listen to job events:
+
+### 1. Worker Events (Local)
+
+Events emitted by the worker instance itself:
+
+```typescript
+import { Worker, Job } from 'bullmq';
+
+const worker = new Worker('paint', async (job) => {
+  // Process job
+});
+
+worker.on('completed', (job: Job, returnvalue: any) => {
+  console.log(`Job ${job.id} completed with result:`, returnvalue);
+});
+
+worker.on('failed', (job: Job | undefined, err: Error) => {
+  console.error(`Job ${job?.id} failed:`, err.message);
+});
+
+worker.on('progress', (job: Job, progress: number | object) => {
+  console.log(`Job ${job.id} progress:`, progress);
+});
+```
+
+### 2. QueueEvents (Global)
+
+Global events that can be listened to from anywhere:
+
+```typescript
+import { QueueEvents } from 'bullmq';
+
+const queueEvents = new QueueEvents('paint');
+
+queueEvents.on('completed', ({ jobId, returnvalue }) => {
+  console.log(`Job ${jobId} completed`);
+});
+
+queueEvents.on('failed', ({ jobId, failedReason }) => {
+  console.error(`Job ${jobId} failed: ${failedReason}`);
+});
+
+queueEvents.on('progress', ({ jobId, data }) => {
+  console.log(`Job ${jobId} progress:`, data);
+});
+```
+
+<Note>
+The difference is that Worker events only fire for jobs processed by that specific worker, while QueueEvents fire for all jobs in the queue regardless of which worker processed them.
+</Note>
+
+## Adding Job Options
+
+Jobs can be customized with various options:
+
+```typescript
+import { Queue } from 'bullmq';
+
+const queue = new Queue('paint');
+
+// Add a delayed job (processed after 5 seconds)
+await queue.add('cars', { color: 'blue' }, {
+  delay: 5000,
+});
+
+// Add a job with priority (lower number = higher priority)
+await queue.add('cars', { color: 'red' }, {
+  priority: 1,
+});
+
+// Add a job that gets removed when completed
+await queue.add('cars', { color: 'green' }, {
+  removeOnComplete: true,
+});
+
+// Add a job with retry configuration
+await queue.add('cars', { color: 'yellow' }, {
+  attempts: 3,
+  backoff: {
+    type: 'exponential',
+    delay: 1000,
+  },
+});
+```
+
+## Reporting Progress
+
+Workers can report progress during job processing:
+
+```typescript
+import { Worker, Job } from 'bullmq';
+
+const worker = new Worker('paint', async (job: Job) => {
+  // Report numeric progress (0-100)
+  await job.updateProgress(25);
+  await someWork();
+  
+  await job.updateProgress(50);
+  await moreWork();
+  
+  await job.updateProgress(75);
+  await almostDone();
+  
+  // You can also report object progress
+  await job.updateProgress({
+    step: 'finishing',
+    percentage: 90,
+  });
+  
+  await job.updateProgress(100);
+  
+  return { done: true };
+});
+```
+
+## Complete Working Example
+
+Here's a complete example in a single file:
+
+```typescript example.ts
+import { Queue, Worker, Job, QueueEvents } from 'bullmq';
+
+const queueName = 'paint';
+
+// Create Queue
+const queue = new Queue(queueName);
+
+// Create Worker
+const worker = new Worker(queueName, async (job: Job) => {
+  console.log(`Processing job ${job.id} of type ${job.name}`);
+  console.log('Data:', job.data);
+  
+  // Simulate work
+  await job.updateProgress(50);
+  await new Promise(resolve => setTimeout(resolve, 1000));
+  await job.updateProgress(100);
+  
+  return { painted: true, color: job.data.color };
+});
+
+// Create QueueEvents
+const queueEvents = new QueueEvents(queueName);
+
+// Listen to events
+queueEvents.on('completed', ({ jobId }) => {
+  console.log(`✓ Job ${jobId} completed`);
+});
+
+queueEvents.on('failed', ({ jobId, failedReason }) => {
+  console.error(`✗ Job ${jobId} failed: ${failedReason}`);
+});
+
+worker.on('error', (err) => {
+  console.error('Worker error:', err);
+});
+
+// Add jobs
+async function main() {
+  await queue.add('cars', { color: 'blue' });
+  await queue.add('cars', { color: 'red' });
+  await queue.add('bikes', { color: 'green' });
+  
+  console.log('Jobs added! Worker is processing...');
+  
+  // Wait for jobs to complete (in real apps, keep worker running)
+  await new Promise(resolve => setTimeout(resolve, 5000));
+  
+  // Cleanup
+  await worker.close();
+  await queue.close();
+  await queueEvents.close();
+  
+  console.log('Done!');
+}
+
+main().catch(console.error);
+```
+
+Run it:
+
+```bash
+npx tsx example.ts
+```
+
+## Error Handling
+
+Always add error handlers to prevent crashes:
+
+```typescript
+import { Worker } from 'bullmq';
+
+const worker = new Worker('paint', async (job) => {
+  // If this throws, job will be marked as failed
+  if (!job.data.color) {
+    throw new Error('Color is required!');
+  }
+  
+  // Process job
+});
+
+// Critical: Handle worker errors
+worker.on('error', (err) => {
+  console.error('Worker error:', err);
+});
+```
+
+<Warning>
+If you don't add an error handler, your worker may stop processing jobs when an error occurs. Always add a `worker.on('error')` listener!
+</Warning>
+
+## TypeScript Support
+
+BullMQ has full TypeScript support with generics:
+
+```typescript
+import { Queue, Worker, Job } from 'bullmq';
+
+// Define your data types
+interface PaintJobData {
+  color: string;
+  finish?: 'matte' | 'glossy';
+}
+
+interface PaintJobResult {
+  painted: boolean;
+  color: string;
+  duration: number;
+}
+
+// Use generics for type safety
+const queue = new Queue<PaintJobData>('paint');
+
+const worker = new Worker<PaintJobData, PaintJobResult>(
+  'paint',
+  async (job: Job<PaintJobData, PaintJobResult>) => {
+    // job.data is typed as PaintJobData
+    const { color, finish = 'glossy' } = job.data;
+    
+    // Return type is PaintJobResult
+    return {
+      painted: true,
+      color,
+      duration: 1000,
+    };
+  }
+);
+```
+
+## Next Steps
+
+Now that you have a working queue, explore more features:
+
+<CardGroup cols={2}>
+  <Card title="Architecture" icon="sitemap" href="/architecture">
+    Learn how BullMQ works internally
+  </Card>
+  <Card title="Job Options" icon="sliders" href="/guide/jobs">
+    Explore delayed jobs, priorities, and more
+  </Card>
+  <Card title="Worker Concurrency" icon="gauge-high" href="/guide/workers/concurrency">
+    Process multiple jobs simultaneously
+  </Card>
+  <Card title="Job Flows" icon="diagram-project" href="/guide/flows">
+    Create complex job dependencies
+  </Card>
+</CardGroup>

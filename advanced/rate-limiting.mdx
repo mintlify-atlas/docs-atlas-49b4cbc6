@@ -1,0 +1,319 @@
+---
+title: 'Rate Limiting'
+description: 'Control the rate at which jobs are processed in your BullMQ queues'
+---
+
+BullMQ provides queue rate limiting capabilities to control how many jobs are processed within a given time period. This is useful for respecting external API limits, protecting downstream services, or managing resource consumption.
+
+## Worker-Level Rate Limiting
+
+Configure rate limiting directly on your worker instances:
+
+```typescript
+import { Worker } from 'bullmq';
+
+const worker = new Worker('painter', async job => {
+  return await paintCar(job);
+}, {
+  connection: {
+    host: 'localhost',
+    port: 6379,
+  },
+  limiter: {
+    max: 10,
+    duration: 1000,
+  },
+});
+```
+
+<ParamField path="limiter.max" type="number" required>
+  Maximum number of jobs to process within the duration period
+</ParamField>
+
+<ParamField path="limiter.duration" type="number" required>
+  Time window in milliseconds for the rate limit
+</ParamField>
+
+<Info>
+  The rate limiter is global across all workers for the same queue. If you have 10 workers with the settings above, only 10 jobs total will be processed per second across all workers.
+</Info>
+
+<Warning>
+  Jobs that get rate limited will stay in the waiting state until the rate limit window resets.
+</Warning>
+
+## Queue-Level Rate Limiting
+
+You can also set rate limits at the queue level using the `setGlobalRateLimit` method:
+
+```typescript
+import { Queue } from 'bullmq';
+
+const queue = new Queue('painter', {
+  connection: {
+    host: 'localhost',
+    port: 6379,
+  },
+});
+
+// Limit to 100 jobs per minute
+await queue.setGlobalRateLimit(100, 60000);
+```
+
+See [Global Rate Limit](/queues/global-rate-limit) for more details on queue-level rate limiting.
+
+## Manual Rate Limiting
+
+Sometimes you need dynamic rate limiting based on runtime conditions, such as receiving a `429 Too Many Requests` response from an API:
+
+```typescript
+import { Worker } from 'bullmq';
+
+const worker = new Worker(
+  'myQueue',
+  async (job) => {
+    try {
+      const response = await fetch(job.data.url);
+      
+      if (response.status === 429) {
+        // Get retry-after header (in seconds)
+        const retryAfter = response.headers.get('retry-after');
+        const delayMs = retryAfter ? parseInt(retryAfter) * 1000 : 5000;
+        
+        // Apply manual rate limit
+        await worker.rateLimit(delayMs);
+        
+        // Throw special error to move job back to wait
+        throw Worker.RateLimitError();
+      }
+      
+      return response.json();
+    } catch (error) {
+      if (error instanceof Worker.RateLimitError) {
+        throw error;
+      }
+      // Handle other errors
+      throw new Error(`Failed to fetch: ${error.message}`);
+    }
+  },
+  {
+    connection: {
+      host: 'localhost',
+      port: 6379,
+    },
+    limiter: {
+      max: 1,
+      duration: 500,
+    },
+  },
+);
+```
+
+<Warning>
+  You must include `limiter` options in your worker configuration for manual rate limiting to work. The `limiter.max` value determines if rate limit validation is executed.
+</Warning>
+
+<Note>
+  When using manual rate limiting, you must throw `Worker.RateLimitError()` to differentiate rate limiting from actual job failures. This ensures the job returns to the waiting state instead of being marked as failed.
+</Note>
+
+## Checking Rate Limit Status
+
+### Get Rate Limit TTL
+
+Check if your queue is currently rate limited and when it will reset:
+
+```typescript
+import { Queue } from 'bullmq';
+
+const queue = new Queue('myQueue', { connection });
+const maxJobs = 100;
+
+const ttl = await queue.getRateLimitTtl(maxJobs);
+
+if (ttl > 0) {
+  console.log(`Queue is rate limited. Resets in ${ttl}ms`);
+} else {
+  console.log('Queue is not rate limited');
+}
+```
+
+### Remove Rate Limit
+
+Manually clear the rate limit to allow immediate job processing:
+
+```typescript
+import { Queue } from 'bullmq';
+
+const queue = new Queue('myQueue', { connection });
+
+// Remove the rate limit
+await queue.removeRateLimitKey();
+
+console.log('Rate limit removed - workers can pick jobs immediately');
+```
+
+<Info>
+  Removing the rate limit key resets the counter to zero, allowing workers to immediately begin processing jobs again.
+</Info>
+
+## Practical Examples
+
+### Example 1: External API Rate Limits
+
+Many third-party APIs enforce rate limits:
+
+```typescript
+import { Queue, Worker } from 'bullmq';
+
+const githubQueue = new Queue('github-api');
+
+// GitHub API allows 5000 requests per hour
+const worker = new Worker('github-api', async job => {
+  const response = await fetch(
+    `https://api.github.com/users/${job.data.username}`
+  );
+  return response.json();
+}, {
+  limiter: {
+    max: 5000,
+    duration: 3600000, // 1 hour
+  },
+});
+```
+
+### Example 2: Email Service Limits
+
+```typescript
+import { Worker } from 'bullmq';
+
+const emailWorker = new Worker('emails', async job => {
+  await sendEmail({
+    to: job.data.to,
+    subject: job.data.subject,
+    body: job.data.body,
+  });
+}, {
+  limiter: {
+    max: 100,
+    duration: 86400000, // 24 hours (SendGrid free tier)
+  },
+});
+```
+
+### Example 3: Burst Protection
+
+```typescript
+import { Worker } from 'bullmq';
+
+const worker = new Worker('notifications', async job => {
+  await sendPushNotification(job.data);
+}, {
+  limiter: {
+    max: 50,
+    duration: 10000, // 50 per 10 seconds = 300/minute average
+  },
+});
+```
+
+## Rate Limiting vs Concurrency
+
+**Rate limiting** controls how many jobs are processed over a time period:
+```typescript
+limiter: { max: 100, duration: 60000 } // 100 jobs per minute
+```
+
+**Concurrency** controls how many jobs run simultaneously:
+```typescript
+concurrency: 10 // 10 jobs at the same time
+```
+
+These work together:
+
+```typescript
+import { Worker } from 'bullmq';
+
+const worker = new Worker('tasks', async job => {
+  return await processJob(job);
+}, {
+  concurrency: 5,    // Max 5 jobs running at once
+  limiter: {
+    max: 100,        // Max 100 jobs per minute
+    duration: 60000,
+  },
+});
+```
+
+See [Concurrency](/workers/concurrency) and [Global Concurrency](/queues/global-concurrency) for more details.
+
+## Monitoring Rate Limits
+
+Track rate limit behavior in your application:
+
+```typescript
+import { Queue, QueueEvents } from 'bullmq';
+
+const queue = new Queue('myQueue');
+const queueEvents = new QueueEvents('myQueue');
+
+setInterval(async () => {
+  const ttl = await queue.getRateLimitTtl(100);
+  const waiting = await queue.getWaitingCount();
+  
+  if (ttl > 0) {
+    console.log(`Rate limited. ${waiting} jobs waiting. Resets in ${ttl}ms`);
+  }
+}, 5000);
+
+queueEvents.on('waiting', ({ jobId }) => {
+  console.log(`Job ${jobId} moved to waiting (possibly rate limited)`);
+});
+```
+
+## Best Practices
+
+<Steps>
+  <Step title="Match external rate limits">
+    Configure your rate limits to match or be slightly lower than external API limits to avoid 429 errors.
+  </Step>
+  
+  <Step title="Use manual rate limiting for dynamic limits">
+    When APIs return rate limit headers, use manual rate limiting to respect them dynamically.
+  </Step>
+  
+  <Step title="Monitor rate limit status">
+    Regularly check `getRateLimitTtl()` to understand if your queue is being throttled.
+  </Step>
+  
+  <Step title="Combine with retry strategies">
+    Use rate limiting alongside [retry strategies](/advanced/retrying-failing-jobs) for robust error handling.
+  </Step>
+  
+  <Step title="Consider multiple queues">
+    For different rate limit requirements, use separate queues with different limits.
+  </Step>
+</Steps>
+
+## Related Topics
+
+<CardGroup cols={2}>
+  <Card title="Global Rate Limit" icon="gauge" href="/queues/global-rate-limit">
+    Queue-level rate limiting across all workers
+  </Card>
+  <Card title="Concurrency" icon="layer-group" href="/workers/concurrency">
+    Control parallel job processing
+  </Card>
+  <Card title="Global Concurrency" icon="globe" href="/queues/global-concurrency">
+    Limit concurrent jobs across all workers
+  </Card>
+  <Card title="Retrying Failing Jobs" icon="rotate-right" href="/advanced/retrying-failing-jobs">
+    Handle job failures with retries
+  </Card>
+</CardGroup>
+
+## API Reference
+
+- [Worker.rateLimit API Reference](https://api.docs.bullmq.io/classes/v5.Worker.html#ratelimit)
+- [Queue.getRateLimitTtl API Reference](https://api.docs.bullmq.io/classes/v5.Queue.html#getratelimitttl)
+- [Queue.removeRateLimitKey API Reference](https://api.docs.bullmq.io/classes/v5.Queue.html#removeratelimitkey)
+- [Queue.setGlobalRateLimit API Reference](https://api.docs.bullmq.io/classes/v5.Queue.html#setglobalratelimit)

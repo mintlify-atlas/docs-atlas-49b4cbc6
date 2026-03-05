@@ -1,0 +1,294 @@
+---
+title: Migration Overview
+description: Guide to migrating to BullMQ from Bull and upgrading between BullMQ versions
+---
+
+BullMQ's team regularly releases new versions packed with bug fixes, new features, or occasionally, breaking changes. As a user operating in a production environment, you might find upgrading to these new versions while maintaining service continuity challenging.
+
+This guide offers tips and advice to ease your transition between versions and from other queue libraries.
+
+## Migration Paths
+
+<CardGroup cols={2}>
+  <Card title="Bull to BullMQ" icon="arrow-right" href="/migrations/bull-to-bullmq">
+    Migrate from the legacy Bull package to BullMQ
+  </Card>
+  <Card title="Newer BullMQ Versions" icon="arrow-up" href="/migrations/newer-versions">
+    Upgrade between BullMQ versions safely
+  </Card>
+</CardGroup>
+
+## Understanding Migration Types
+
+Different types of upgrades require different strategies:
+
+<Tabs>
+  <Tab title="Bugfix Releases">
+    **Version Pattern:** `3.14.4` → `3.14.7` (micro version change)
+    
+    - **Risk Level:** Low
+    - **Strategy:** Simple update, no code changes needed
+    - **Downtime:** None required
+    
+    ```bash
+    npm install bullmq@latest
+    ```
+    
+    <Info>
+    While it's not critical that all instances run the same version, we recommend it for consistency.
+    </Info>
+  </Tab>
+  
+  <Tab title="New Features">
+    **Version Pattern:** `3.14.7` → `3.20.5` (minor version change)
+    
+    - **Risk Level:** Low to Medium
+    - **Strategy:** Update all instances first, then deploy code using new features
+    - **Downtime:** None required
+    
+    <Steps>
+      <Step title="Update all instances to new version">
+        ```bash
+        npm install bullmq@3.20.5
+        ```
+      </Step>
+      <Step title="Verify all instances are updated">
+        Check that all workers and queue instances are running the new version
+      </Step>
+      <Step title="Deploy code using new features">
+        Only after all instances are updated, deploy code that depends on new features
+      </Step>
+    </Steps>
+  </Tab>
+  
+  <Tab title="Breaking Changes">
+    **Version Pattern:** `3.x.x` → `4.0.0` (major version change)
+    
+    - **Risk Level:** Medium to High
+    - **Strategy:** Depends on change type (see below)
+    - **Downtime:** May be required
+    
+    Breaking changes fall into two categories:
+    
+    ### API Breaking Changes
+    - Changed method parameters
+    - Removed methods
+    - Different operational methods
+    - Usually straightforward to fix with tests
+    
+    ### Data Structure Breaking Changes
+    - More challenging
+    - Can be **additive** or **destructive**
+    - May require special migration strategies
+  </Tab>
+</Tabs>
+
+## General Migration Advice
+
+<Warning>
+**Before Any Upgrade:**
+- Always consult the [Changelog](https://github.com/taskforcesh/bullmq/blob/master/CHANGELOG.md)
+- Avoid large version jumps - upgrade incrementally
+- Test in a staging environment first
+</Warning>
+
+### Recommended Upgrade Path
+
+<Steps>
+  <Step title="Start with bugfix releases">
+    Apply all bugfix releases first (e.g., `1.3.7` → `1.3.12`)
+  </Step>
+  
+  <Step title="Proceed to new features">
+    Move to the latest minor version (e.g., `1.3.12` → `1.10.5`)
+  </Step>
+  
+  <Step title="Finally, major releases">
+    Only then upgrade major versions (e.g., `1.10.5` → `2.0.0`)
+  </Step>
+</Steps>
+
+### Example Migration Timeline
+
+If you're on version `1.3.7` and want to reach `4.2.6`:
+
+```
+1.3.7 → 1.3.12 (bugfixes)
+  ↓
+1.12.0 (new features)
+  ↓
+2.0.0 (breaking changes)
+  ↓
+2.14.3 (bugfixes + features)
+  ↓
+3.0.0 (breaking changes)
+  ↓
+3.20.5 (bugfixes + features)
+  ↓
+4.2.6 (breaking changes + features)
+```
+
+## Migration Strategies
+
+For challenging upgrades, consider these strategies:
+
+<AccordionGroup>
+  <Accordion title="Pause/Upgrade/Unpause">
+    Suitable when your business can tolerate a brief pause:
+    
+    <Steps>
+      <Step title="Pause all queues">
+        ```typescript
+        await queue.pause();
+        ```
+      </Step>
+      
+      <Step title="Wait for active jobs to complete">
+        ```typescript
+        const activeCount = await queue.getActiveCount();
+        while (activeCount > 0) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          activeCount = await queue.getActiveCount();
+        }
+        ```
+      </Step>
+      
+      <Step title="Upgrade all instances">
+        Deploy new version to all workers and queue instances
+      </Step>
+      
+      <Step title="Unpause queues">
+        ```typescript
+        await queue.resume();
+        ```
+      </Step>
+    </Steps>
+    
+    <Warning>
+    This strategy is less useful if breaking changes affect Queue instances. Always consult the changelog.
+    </Warning>
+  </Accordion>
+  
+  <Accordion title="Blue-Green Deployment">
+    Run old and new versions side-by-side:
+    
+    1. **Deploy new version alongside old version**
+    2. **Gradually shift traffic to new version**
+    3. **Monitor for issues**
+    4. **Once stable, retire old version**
+    
+    This works best when:
+    - You have sufficient infrastructure
+    - Changes are additive (not destructive)
+    - You can route jobs between versions
+  </Accordion>
+  
+  <Accordion title="Use New Queues">
+    The safest but most drastic solution:
+    
+    <Steps>
+      <Step title="Create new queues with different names">
+        ```typescript
+        // Old
+        const oldQueue = new Queue('myQueue');
+        
+        // New
+        const newQueue = new Queue('myQueueV2');
+        ```
+        
+        Or use a different prefix:
+        ```typescript
+        const newQueue = new Queue('myQueue', {
+          prefix: 'bull-v2',
+        });
+        ```
+      </Step>
+      
+      <Step title="Run both versions in parallel">
+        - Old version processes old queues
+        - New version processes new queues
+        - Direct new jobs to new queues
+      </Step>
+      
+      <Step title="Wait for old queues to drain">
+        Monitor old queues until all jobs are processed
+      </Step>
+      
+      <Step title="Retire old version">
+        Once old queues are empty, shut down old version
+      </Step>
+    </Steps>
+  </Accordion>
+</AccordionGroup>
+
+## Testing Migrations
+
+<Steps>
+  <Step title="Test in staging environment">
+    Always test migrations in a non-production environment first
+  </Step>
+  
+  <Step title="Create test jobs">
+    ```typescript
+    // Add test jobs to verify functionality
+    await queue.add('test', { testId: 1 });
+    await queue.add('test', { testId: 2 });
+    ```
+  </Step>
+  
+  <Step title="Verify job processing">
+    Ensure jobs are processed correctly with the new version
+  </Step>
+  
+  <Step title="Monitor for errors">
+    Watch logs and error rates during and after migration
+  </Step>
+</Steps>
+
+## Monitoring During Migration
+
+Key metrics to watch:
+
+<CardGroup cols={2}>
+  <Card title="Job Completion Rate" icon="chart-line">
+    Ensure jobs continue to complete at normal rates
+  </Card>
+  
+  <Card title="Error Rate" icon="triangle-exclamation">
+    Watch for spikes in errors during migration
+  </Card>
+  
+  <Card title="Queue Length" icon="list">
+    Monitor waiting and active job counts
+  </Card>
+  
+  <Card title="Stalled Jobs" icon="clock">
+    Check for unusual numbers of stalled jobs
+  </Card>
+</CardGroup>
+
+## Need Help?
+
+If you encounter issues during migration:
+
+- Check the [Troubleshooting guide](/operations/troubleshooting)
+- Review the [Changelog](https://github.com/taskforcesh/bullmq/blob/master/CHANGELOG.md)
+- Ask in [GitHub Discussions](https://github.com/taskforcesh/bullmq/discussions)
+- Report bugs in [GitHub Issues](https://github.com/taskforcesh/bullmq/issues)
+
+## Related Resources
+
+<CardGroup cols={2}>
+  <Card title="Bull to BullMQ" icon="arrow-right" href="/migrations/bull-to-bullmq">
+    Detailed guide for migrating from Bull
+  </Card>
+  <Card title="Newer Versions" icon="arrow-up" href="/migrations/newer-versions">
+    Strategies for upgrading BullMQ versions
+  </Card>
+  <Card title="Going to Production" icon="rocket" href="/operations/going-to-production">
+    Production deployment best practices
+  </Card>
+  <Card title="Troubleshooting" icon="wrench" href="/operations/troubleshooting">
+    Common issues and solutions
+  </Card>
+</CardGroup>

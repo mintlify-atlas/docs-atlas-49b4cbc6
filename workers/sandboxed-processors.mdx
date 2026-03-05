@@ -1,0 +1,477 @@
+---
+title: 'Sandboxed Processors'
+description: 'Isolate CPU-intensive job processing in separate processes or worker threads'
+---
+
+Sandboxed processors run job processing code in isolated child processes or worker threads, preventing CPU-intensive operations from blocking the worker's bookkeeping tasks and causing stalled jobs.
+
+## Why Use Sandboxed Processors?
+
+When processors perform CPU-intensive operations, they block Node.js's event loop, preventing the worker from:
+
+- Renewing job locks
+- Checking for stalled jobs
+- Responding to shutdown signals
+- Fetching new jobs
+
+This leads to jobs being marked as "stalled" and re-processed unnecessarily.
+
+**Sandboxed processors solve this by:**
+
+- Running processor code in a separate process/thread
+- Keeping the main worker's event loop free for bookkeeping
+- Enabling true parallel processing on multi-core systems
+- Preventing one job from blocking others
+
+## Creating a Sandboxed Processor
+
+Define your processor in a separate file:
+
+```typescript
+// processor.ts
+import { SandboxedJob } from 'bullmq';
+
+module.exports = async (job: SandboxedJob) => {
+  console.log('Processing job:', job.id);
+  console.log('Job data:', job.data);
+  
+  // Perform CPU-intensive work
+  const result = heavyComputation(job.data);
+  
+  // Report progress
+  await job.updateProgress(50);
+  
+  // More work
+  const final = moreHeavyWork(result);
+  
+  await job.updateProgress(100);
+  
+  // Return result
+  return final;
+};
+
+function heavyComputation(data: any) {
+  // CPU-intensive operations
+  let result = 0;
+  for (let i = 0; i < 1000000000; i++) {
+    result += Math.sqrt(i);
+  }
+  return result;
+}
+```
+
+Then reference this file when creating the worker:
+
+```typescript
+// worker.ts
+import { Worker } from 'bullmq';
+import path from 'path';
+
+const processorFile = path.join(__dirname, 'processor.js');
+
+const worker = new Worker('queueName', processorFile, {
+  connection: {
+    host: 'localhost',
+    port: 6379,
+  },
+  concurrency: 4, // Run 4 sandboxed processes in parallel
+});
+
+console.log('Sandboxed worker started');
+```
+
+<Info>
+  The processor file must be a path to a compiled JavaScript file (`.js`, `.cjs`, `.mjs`). If you're using TypeScript, compile it first or use a file extension like `.ts` that your runtime supports.
+</Info>
+
+## File Path Options
+
+BullMQ accepts several file path formats:
+
+### Standard String Path
+
+```typescript
+import path from 'path';
+
+const processorFile = path.join(__dirname, 'processor.js');
+const worker = new Worker('queueName', processorFile);
+```
+
+### URL Instance (Recommended for Windows)
+
+```typescript
+import { pathToFileURL } from 'url';
+import path from 'path';
+
+const processorUrl = pathToFileURL(
+  path.join(__dirname, 'processor.js'),
+);
+
+const worker = new Worker('queueName', processorUrl);
+```
+
+<Warning>
+  URL instances are recommended on Windows to avoid path-related issues.
+</Warning>
+
+### Automatic Extension Resolution
+
+BullMQ automatically tries these extensions if not specified:
+
+```typescript
+// If you specify 'processor', BullMQ tries:
+// - processor.js
+// - processor.ts
+// - processor.flow
+// - processor.cjs
+// - processor.mjs
+
+const worker = new Worker('queueName', './processor');
+```
+
+## Worker Threads vs Child Processes
+
+BullMQ supports two sandboxing mechanisms:
+
+### Child Processes (Default)
+
+Uses Node's `child_process.fork()` to spawn separate processes:
+
+```typescript
+const worker = new Worker('queueName', processorFile, {
+  // Child processes (default)
+  useWorkerThreads: false,
+  
+  // Optional: Configure child process options
+  workerForkOptions: {
+    env: { ...process.env, NODE_ENV: 'production' },
+    execArgv: ['--max-old-space-size=4096'],
+  },
+});
+```
+
+**Characteristics:**
+
+- **Isolation**: Complete process isolation
+- **Memory**: Separate memory space per process
+- **Overhead**: Higher resource usage
+- **Stability**: Process crash doesn't affect main worker
+
+### Worker Threads (v3.13.0+)
+
+Uses Node's `worker_threads` module:
+
+```typescript
+const worker = new Worker('queueName', processorFile, {
+  useWorkerThreads: true,
+  
+  // Optional: Configure worker thread options
+  workerThreadsOptions: {
+    env: { ...process.env },
+    resourceLimits: {
+      maxOldGenerationSizeMb: 4096,
+      maxYoungGenerationSizeMb: 2048,
+    },
+  },
+});
+```
+
+**Characteristics:**
+
+- **Performance**: Lower overhead than child processes
+- **Memory**: Shared memory possible (with SharedArrayBuffer)
+- **Startup**: Faster thread creation
+- **Resource usage**: Less demanding than processes
+
+<Note>
+  Worker threads are lighter than child processes but still require duplicating the Node.js runtime. They're not as lightweight as threads in other languages.
+</Note>
+
+## Sandboxed Job API
+
+The `SandboxedJob` interface provides a subset of the full `Job` API:
+
+```typescript
+import { SandboxedJob } from 'bullmq';
+
+module.exports = async (job: SandboxedJob) => {
+  // Available properties
+  const id = job.id;              // Job ID
+  const name = job.name;          // Job name
+  const data = job.data;          // Job data
+  const opts = job.opts;          // Job options
+  const attemptsMade = job.attemptsMade;
+  const timestamp = job.timestamp;
+  
+  // Available methods
+  await job.updateProgress(50);   // Report progress
+  await job.log('Processing...');  // Add log entry
+  
+  // Return value
+  return { result: 'completed' };
+};
+```
+
+## Handling Cancellation in Sandboxed Processors
+
+Sandboxed processors automatically support cancellation through the `AbortSignal`:
+
+```typescript
+// processor.ts
+import { SandboxedJob } from 'bullmq';
+
+module.exports = async (
+  job: SandboxedJob,
+  token?: string,
+  signal?: AbortSignal,
+) => {
+  // Check for cancellation
+  if (signal?.aborted) {
+    throw new Error('Job was cancelled');
+  }
+  
+  // Listen for abort event
+  signal?.addEventListener('abort', () => {
+    console.log('Cancellation requested for job:', job.id);
+    // Cleanup resources
+  });
+  
+  // Process in chunks, checking signal
+  const items = job.data.items;
+  for (let i = 0; i < items.length; i++) {
+    if (signal?.aborted) {
+      throw new Error('Job cancelled during processing');
+    }
+    
+    await processItem(items[i]);
+    await job.updateProgress((i / items.length) * 100);
+  }
+  
+  return { processed: items.length };
+};
+```
+
+Cancel from the main worker:
+
+```typescript
+// worker.ts
+const worker = new Worker('queueName', processorFile);
+
+// Cancel a specific job
+worker.cancelJob('job-id-123');
+```
+
+## TypeScript with Sandboxed Processors
+
+For TypeScript projects, compile your processor files:
+
+<Steps>
+  <Step title="Write processor in TypeScript">
+    ```typescript
+    // src/processors/image-processor.ts
+    import { SandboxedJob } from 'bullmq';
+    
+    export default async (job: SandboxedJob) => {
+      return await processImage(job.data.imageUrl);
+    };
+    ```
+  </Step>
+  
+  <Step title="Configure TypeScript compilation">
+    ```json
+    // tsconfig.json
+    {
+      "compilerOptions": {
+        "outDir": "./dist",
+        "module": "commonjs",
+        "esModuleInterop": true
+      }
+    }
+    ```
+  </Step>
+  
+  <Step title="Compile TypeScript">
+    ```bash
+    npx tsc
+    ```
+  </Step>
+  
+  <Step title="Reference compiled file in worker">
+    ```typescript
+    import path from 'path';
+    
+    const processorFile = path.join(__dirname, '../dist/processors/image-processor.js');
+    const worker = new Worker('images', processorFile);
+    ```
+  </Step>
+</Steps>
+
+See [this blog post](https://blog.taskforce.sh/using-typescript-with-bullmq/) for a detailed tutorial.
+
+## Concurrency with Sandboxed Processors
+
+Set concurrency to match your CPU cores:
+
+```typescript
+import os from 'os';
+
+const cpuCount = os.cpus().length;
+
+const worker = new Worker('queueName', processorFile, {
+  concurrency: cpuCount, // One process/thread per CPU core
+});
+```
+
+For mixed workloads:
+
+```typescript
+// Reserve some cores for the system
+const workerConcurrency = Math.max(1, cpuCount - 1);
+
+const worker = new Worker('queueName', processorFile, {
+  concurrency: workerConcurrency,
+  useWorkerThreads: true,
+});
+```
+
+## Error Handling
+
+Errors in sandboxed processors are caught and mark the job as failed:
+
+```typescript
+// processor.ts
+module.exports = async (job: SandboxedJob) => {
+  try {
+    return await riskyOperation(job.data);
+  } catch (error) {
+    // Log the error
+    await job.log(`Error: ${error.message}`);
+    
+    // Re-throw to mark job as failed
+    throw error;
+  }
+};
+```
+
+Listen for failures in the main worker:
+
+```typescript
+worker.on('failed', (job, error) => {
+  console.error(`Job ${job?.id} failed in sandbox:`, error.message);
+});
+```
+
+## Performance Considerations
+
+### Process/Thread Overhead
+
+Each sandboxed job requires spawning or reusing a process/thread:
+
+```typescript
+// High overhead: New process per job (concurrency 1)
+const slowWorker = new Worker('queue', processorFile, {
+  concurrency: 1,
+});
+
+// Optimized: Reuse processes/threads (concurrency > 1)
+const fastWorker = new Worker('queue', processorFile, {
+  concurrency: 4, // Pool of 4 processes/threads
+});
+```
+
+### When NOT to Use Sandboxing
+
+Sandboxing adds overhead. Don't use it for:
+
+- **I/O-bound operations**: Database queries, HTTP requests, file I/O
+- **Fast computations**: Operations that complete in milliseconds
+- **Low CPU usage**: Tasks that don't block the event loop
+
+```typescript
+// ❌ Don't sandbox: I/O-bound
+const badWorker = new Worker('emails', './send-email-processor.js');
+
+// ✅ Use inline: I/O doesn't block event loop
+const goodWorker = new Worker('emails', async (job) => {
+  await emailService.send(job.data);
+});
+```
+
+## Monitoring Sandboxed Workers
+
+```typescript
+import { Worker } from 'bullmq';
+
+const worker = new Worker('queueName', processorFile, {
+  concurrency: 4,
+});
+
+worker.on('active', (job) => {
+  console.log(`Job ${job.id} started in sandbox`);
+});
+
+worker.on('progress', (job, progress) => {
+  console.log(`Job ${job.id} progress:`, progress);
+});
+
+worker.on('completed', (job, result) => {
+  console.log(`Job ${job.id} completed in sandbox:`, result);
+});
+
+worker.on('error', (error) => {
+  console.error('Sandbox error:', error);
+});
+```
+
+## Best Practices
+
+<Steps>
+  <Step title="Use sandboxing for CPU-intensive work only">
+    Reserve sandboxing for computations, image processing, video encoding, etc.
+  </Step>
+  
+  <Step title="Match concurrency to CPU cores">
+    ```typescript
+    { concurrency: os.cpus().length }
+    ```
+  </Step>
+  
+  <Step title="Prefer worker threads for most use cases">
+    Worker threads have lower overhead than child processes.
+  </Step>
+  
+  <Step title="Keep processor files self-contained">
+    Minimize dependencies in processor files to reduce memory usage.
+  </Step>
+  
+  <Step title="Handle errors gracefully">
+    Catch and log errors in processors to aid debugging.
+  </Step>
+  
+  <Step title="Monitor resource usage">
+    Watch memory and CPU usage to tune concurrency.
+  </Step>
+</Steps>
+
+## Related Topics
+
+<CardGroup cols={2}>
+  <Card title="Concurrency" icon="layer-group" href="/workers/concurrency">
+    Configure parallel processing
+  </Card>
+  <Card title="Stalled Jobs" icon="clock" href="/workers/stalled-jobs">
+    Understand stalled job recovery
+  </Card>
+  <Card title="Cancelling Jobs" icon="ban" href="/workers/cancelling-jobs">
+    Cancel sandboxed jobs
+  </Card>
+  <Card title="Worker Options" icon="gear" href="/workers/overview">
+    Configure worker behavior
+  </Card>
+</CardGroup>
+
+## API Reference
+
+- [Worker API Reference](https://api.docs.bullmq.io/classes/v5.Worker.html)
+- [SandboxedJob Interface](https://api.docs.bullmq.io/interfaces/v5.SandboxedJob.html)
+- [WorkerOptions.useWorkerThreads](https://api.docs.bullmq.io/interfaces/v5.WorkerOptions.html#useWorkerThreads)

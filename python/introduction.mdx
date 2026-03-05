@@ -1,0 +1,66 @@
+---
+title: Python
+description: BullMQ for Python - A background job processor and message queue based on Redis
+---
+
+BullMQ is now available as a Python package, providing a powerful job queue system backed by Redis. The Python implementation is fully interoperable with the Node.js, Elixir, and PHP versions.
+
+## Overview
+
+BullMQ for Python is a close port of the Node.js library, using the same Lua scripts for Redis operations. This ensures compatibility across all language implementations.
+
+## Key Features
+
+- **Add jobs to queues** - Regular and delayed jobs with deduplication support
+- **Workers** - Process jobs concurrently using asyncio
+- **Job progress** - Track job progress in real-time
+- **Job backoff** - Automatic retry with configurable backoff strategies
+- **Getters** - Query job states and queue information
+- **Interoperability** - Jobs can be added in Python and processed by workers in Node.js, Elixir, or PHP
+
+## Requirements
+
+- Python 3.10 or higher
+- Redis 5.0 or higher (6.2+ recommended)
+
+## Architecture
+
+BullMQ uses [asyncio](https://docs.python.org/3/library/asyncio.html) for concurrency, enabling efficient processing of jobs without blocking. All queue operations are asynchronous and should be awaited.
+
+## Use Cases
+
+Python BullMQ is ideal for:
+
+- Background job processing (email sending, image processing, etc.)
+- Distributed task execution across multiple workers
+- Scheduled and delayed job execution
+- Building hybrid systems where jobs are produced in Python and consumed in Node.js (or vice versa)
+
+## Version
+
+Current version: **2.19.5**
+
+<Info>
+  The Python package is currently in **alpha** status. While it's production-ready for many use cases, the API may evolve based on community feedback.
+</Info>
+
+<Warning>
+  If Redis responses are in binary format, you should pass the `decode_responses=True` option when creating your Redis connection. See the [redis-py documentation](https://redis-py.readthedocs.io/en/latest/examples/connection_examples.html) for details.
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/python/installation">
+    Install BullMQ for Python using pip
+  </Card>
+  <Card title="Usage Guide" icon="code" href="/python/usage">
+    Learn how to add jobs and create workers
+  </Card>
+  <Card title="Changelog" icon="clock-rotate-left" href="/python/changelog">
+    View release history and updates
+  </Card>
+  <Card title="Main Documentation" icon="book" href="/">
+    Explore the full BullMQ documentation
+  </Card>
+</CardGroup>

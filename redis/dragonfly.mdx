@@ -1,0 +1,116 @@
+---
+title: Dragonfly
+description: Use Dragonfly as a high-performance Redis alternative for BullMQ
+---
+
+[Dragonfly](https://www.dragonflydb.io/) offers a drop-in replacement for Redis, boasting a much faster and more memory-efficient implementation of several data structures used by BullMQ. It also enables the utilization of all available cores in your CPUs.
+
+<Info>
+Check out [this performance article](https://bullmq.io/news/101023/dragonfly-compatibility/) for detailed benchmark results comparing Dragonfly with Redis.
+</Info>
+
+## Performance Benefits
+
+Dragonfly provides several advantages over standard Redis:
+
+- **Multi-core utilization** - Uses all available CPU cores for better performance
+- **Memory efficiency** - More efficient memory usage for data structures
+- **Faster operations** - Optimized implementation of Redis commands
+- **Drop-in replacement** - Compatible with existing Redis clients
+
+## Configuration for BullMQ
+
+To fully leverage Dragonfly's capabilities with BullMQ, you need to configure your queues properly.
+
+### Queue Naming Convention
+
+<Steps>
+  <Step title="Use curly braces in queue names">
+    Name your queues using curly braces to allow Dragonfly to assign a thread to each queue.
+    
+    ```typescript
+    // Instead of:
+    const queue = new Queue('myqueue');
+    
+    // Use:
+    const queue = new Queue('{myqueue}');
+    ```
+  </Step>
+  
+  <Step title="Distribute queues across cores">
+    For multiple queues, this approach enables you to allocate different CPU cores to each queue.
+    
+    ```typescript
+    const queue1 = new Queue('{orders}');
+    const queue2 = new Queue('{notifications}');
+    const queue3 = new Queue('{analytics}');
+    ```
+  </Step>
+  
+  <Step title="Split single queue for multi-core processing (optional)">
+    Even with a single queue, you can exploit multi-core advantages by splitting it into multiple queues.
+    
+    ```typescript
+    const queue1 = new Queue('{myqueue-1}');
+    const queue2 = new Queue('{myqueue-2}');
+    const queue3 = new Queue('{myqueue-3}');
+    
+    // Distribute jobs using round-robin or random distribution
+    const queueIndex = Math.floor(Math.random() * 3) + 1;
+    const selectedQueue = eval(`queue${queueIndex}`);
+    await selectedQueue.add('job-name', data);
+    ```
+  </Step>
+</Steps>
+
+## Important Limitations
+
+<Warning>
+Be aware that certain features might not function across multiple queues:
+
+- **Priorities** - Job priorities don't work across separate queues
+- **Rate limiting** - Rate limits are per-queue, not global
+- **Job ordering** - Global FIFO ordering is lost when splitting queues
+
+Your specific requirements will determine whether you can divide a single queue in this manner.
+</Warning>
+
+## Installation and Setup
+
+For comprehensive instructions and the necessary flags to optimize your Dragonfly instance for BullMQ, please consult the [official Dragonfly integration guide](https://www.dragonflydb.io/docs/integrations/bullmq).
+
+## Example Configuration
+
+```typescript
+import { Queue, Worker } from 'bullmq';
+import { createClient } from 'redis';
+
+// Create connection to Dragonfly
+const connection = {
+  host: 'localhost',
+  port: 6379,
+};
+
+// Use curly braces in queue name
+const queue = new Queue('{myqueue}', { connection });
+
+const worker = new Worker(
+  '{myqueue}',
+  async (job) => {
+    console.log('Processing job:', job.id);
+    // Process job
+  },
+  { connection }
+);
+```
+
+## Related Resources
+
+<CardGroup cols={2}>
+  <Card title="Redis Compatibility" icon="check" href="/redis/compatibility">
+    Learn about Redis compatibility requirements
+  </Card>
+  <Card title="Going to Production" icon="rocket" href="/operations/going-to-production">
+    Production deployment best practices
+  </Card>
+</CardGroup>

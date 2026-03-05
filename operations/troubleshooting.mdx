@@ -1,0 +1,473 @@
+---
+title: Troubleshooting
+description: Common errors and solutions when using BullMQ
+---
+
+This section provides hints and solutions for common errors you might encounter when using BullMQ.
+
+## Missing Locks
+
+### Error Message
+
+```
+Missing lock for job 1234. moveToFinished.
+```
+
+### What It Means
+
+This error occurs when a job being processed by a worker unexpectedly loses its "lock."
+
+<Info>
+When a worker processes a job, it requires a special lock key to ensure the job is currently "owned" by that worker. This prevents other workers from picking up the same job.
+</Info>
+
+However, this lock can be deleted, and the deletion may not be detected until the worker tries to move the job to completed or failed status.
+
+### Common Causes
+
+<AccordionGroup>
+  <Accordion title="High CPU Usage">
+    **Problem:** The worker is consuming too much CPU and has no time to renew the lock every 30 seconds (default expiration time).
+    
+    **Solution:**
+    - Reduce worker concurrency
+    - Optimize job processing code
+    - Move CPU-intensive work to separate processes
+    - Monitor worker CPU usage
+    
+    ```typescript
+    const worker = new Worker(
+      'myqueue',
+      processor,
+      {
+        concurrency: 5, // Reduce if CPU usage is high
+      }
+    );
+    ```
+  </Accordion>
+  
+  <Accordion title="Redis Connection Lost">
+    **Problem:** The worker lost communication with Redis and cannot renew the lock in time.
+    
+    **Solution:**
+    - Check network stability between worker and Redis
+    - Implement proper connection retry logic
+    - Monitor Redis connection health
+    - Consider increasing lock renewal interval
+    
+    ```typescript
+    const worker = new Worker(
+      'myqueue',
+      processor,
+      {
+        lockDuration: 60000, // Increase to 60 seconds
+        connection: {
+          retryStrategy: (times) => {
+            return Math.min(times * 1000, 20000);
+          },
+        },
+      }
+    );
+    ```
+  </Accordion>
+  
+  <Accordion title="Job Forcefully Removed">
+    **Problem:** The job was forcefully removed using BullMQ's APIs or by removing the entire queue.
+    
+    **Solution:**
+    - Avoid removing jobs that are currently being processed
+    - Use proper job state checks before removal
+    - Implement graceful job cancellation
+    
+    ```typescript
+    // Check job state before removing
+    const job = await queue.getJob(jobId);
+    const state = await job.getState();
+    
+    if (state !== 'active') {
+      await job.remove();
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="Wrong maxmemory-policy">
+    **Problem:** Redis instance has wrong `maxmemory-policy` setting. It should be `noeviction` to avoid Redis removing lock keys before expiration.
+    
+    **Solution:**
+    - Set `maxmemory-policy` to `noeviction` in Redis config
+    - See [Going to Production](/operations/going-to-production#max-memory-policy) for details
+    
+    ```bash
+    # In redis.conf
+    maxmemory-policy noeviction
+    ```
+    
+    <Warning>
+    This is a critical configuration. Without `noeviction`, Redis may remove lock keys, causing jobs to lose their locks.
+    </Warning>
+  </Accordion>
+</AccordionGroup>
+
+## Invalid or Undefined Environment Variables
+
+### Error Message
+
+```
+ERR Error running script ... Lua redis() command arguments must be strings or integers
+```
+
+### What It Means
+
+This error typically happens when a parameter passed into a Redis command ends up being something other than a valid string or number.
+
+### Common Causes
+
+If you rely on environment variables (e.g., for queue names or job data), this error can occur when those variables are:
+
+- **Undefined** (not set at all)
+- **Empty strings** (i.e., `""`)
+- **Non-string values** (e.g., objects or arrays)
+
+### Solutions
+
+<Steps>
+  <Step title="Validate Environment Variables Early">
+    Check all required environment variables during initialization:
+    
+    ```typescript
+    const queueName = process.env.QUEUE_NAME;
+    
+    if (!queueName) {
+      throw new Error('QUEUE_NAME is not defined or is empty.');
+    }
+    
+    const queue = new Queue(queueName, { connection });
+    ```
+    
+    This ensures you fail fast if a variable isn't set, instead of causing hidden Lua script errors.
+  </Step>
+  
+  <Step title="Use TypeScript Strictness">
+    Enable `strictNullChecks` and explicitly type environment variables:
+    
+    ```typescript
+    // types/env.d.ts
+    declare global {
+      namespace NodeJS {
+        interface ProcessEnv {
+          QUEUE_NAME: string;
+          REDIS_HOST: string;
+          REDIS_PORT: string;
+        }
+      }
+    }
+    
+    export {};
+    ```
+    
+    ```typescript
+    // Compile-time error if not defined
+    const queueName: string = process.env.QUEUE_NAME;
+    ```
+  </Step>
+  
+  <Step title="Provide Defaults Where Appropriate">
+    Use fallback values when appropriate:
+    
+    ```typescript
+    const queueName = process.env.QUEUE_NAME ?? 'defaultQueue';
+    const redisPort = parseInt(process.env.REDIS_PORT ?? '6379', 10);
+    ```
+    
+    <Warning>
+    Be sure fallback values are actually valid in your production workflow.
+    </Warning>
+  </Step>
+</Steps>
+
+### Example: Robust Configuration
+
+```typescript
+import { Queue } from 'bullmq';
+
+// Validation function
+function requireEnv(name: string): string {
+  const value = process.env[name];
+  
+  if (!value || value.trim() === '') {
+    throw new Error(`Environment variable ${name} is required but not set`);
+  }
+  
+  return value;
+}
+
+// Safe configuration
+const queueName = requireEnv('QUEUE_NAME');
+const redisHost = requireEnv('REDIS_HOST');
+const redisPort = parseInt(requireEnv('REDIS_PORT'), 10);
+
+const queue = new Queue(queueName, {
+  connection: {
+    host: redisHost,
+    port: redisPort,
+  },
+});
+```
+
+## Job Stuck in Active State
+
+### Symptoms
+
+- Jobs remain in "active" state indefinitely
+- Jobs are not being processed
+- No error messages in logs
+
+### Solutions
+
+<AccordionGroup>
+  <Accordion title="Worker Not Running">
+    Ensure workers are running and connected:
+    
+    ```typescript
+    worker.on('ready', () => {
+      console.log('Worker is ready and connected');
+    });
+    
+    worker.on('error', (err) => {
+      console.error('Worker error:', err);
+    });
+    ```
+  </Accordion>
+  
+  <Accordion title="Job Processor Hanging">
+    Make sure job processors complete or throw errors:
+    
+    ```typescript
+    // Bad - hanging promise
+    const worker = new Worker('myqueue', async (job) => {
+      someAsyncFunction(); // Missing await!
+    });
+    
+    // Good - proper async handling
+    const worker = new Worker('myqueue', async (job) => {
+      await someAsyncFunction();
+    });
+    ```
+  </Accordion>
+  
+  <Accordion title="Stalled Job Check">
+    Jobs should automatically become stalled after 30 seconds. Check stalled jobs:
+    
+    ```typescript
+    const stalledJobs = await queue.getJobs(['stalled']);
+    console.log('Stalled jobs:', stalledJobs.length);
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Memory Issues
+
+### Symptoms
+
+- Redis running out of memory
+- Jobs disappearing
+- "OOM command not allowed" errors
+
+### Solutions
+
+<Steps>
+  <Step title="Configure maxmemory-policy">
+    ```bash
+    # In redis.conf
+    maxmemory-policy noeviction
+    ```
+  </Step>
+  
+  <Step title="Enable job auto-removal">
+    ```typescript
+    const queue = new Queue('myqueue', {
+      defaultJobOptions: {
+        removeOnComplete: 100,
+        removeOnFail: 1000,
+      },
+    });
+    ```
+  </Step>
+  
+  <Step title="Increase Redis memory">
+    ```bash
+    # In redis.conf
+    maxmemory 2gb
+    ```
+  </Step>
+  
+  <Step title="Monitor job data size">
+    Keep job data small - store large data elsewhere:
+    
+    ```typescript
+    // Bad - large data in job
+    await queue.add('process', {
+      largeFile: Buffer.from(...), // Don't do this!
+    });
+    
+    // Good - reference to external storage
+    await queue.add('process', {
+      fileUrl: 's3://bucket/file.txt',
+    });
+    ```
+  </Step>
+</Steps>
+
+## Connection Issues
+
+### Symptoms
+
+- "ECONNREFUSED" errors
+- Workers not picking up jobs
+- Intermittent failures
+
+### Solutions
+
+<Tabs>
+  <Tab title="Check Redis Connection">
+    ```typescript
+    import { createClient } from 'redis';
+    
+    const client = createClient({
+      url: 'redis://localhost:6379',
+    });
+    
+    client.on('error', (err) => {
+      console.error('Redis Client Error', err);
+    });
+    
+    await client.connect();
+    await client.ping();
+    console.log('Redis connected successfully');
+    ```
+  </Tab>
+  
+  <Tab title="Configure Retry Strategy">
+    ```typescript
+    const worker = new Worker('myqueue', processor, {
+      connection: {
+        host: 'localhost',
+        port: 6379,
+        retryStrategy: (times) => {
+          if (times > 10) {
+            return null; // Stop retrying
+          }
+          return Math.min(times * 1000, 20000);
+        },
+      },
+    });
+    ```
+  </Tab>
+  
+  <Tab title="Check Network Connectivity">
+    ```bash
+    # Test Redis connection
+    redis-cli -h localhost -p 6379 ping
+    
+    # Check if Redis is listening
+    netstat -an | grep 6379
+    
+    # Test from application server
+    telnet redis-host 6379
+    ```
+  </Tab>
+</Tabs>
+
+## Performance Issues
+
+### Jobs Processing Slowly
+
+<CardGroup cols={2}>
+  <Card title="Increase Concurrency" icon="gauge-high">
+    ```typescript
+    const worker = new Worker(
+      'myqueue',
+      processor,
+      { concurrency: 10 }
+    );
+    ```
+  </Card>
+  
+  <Card title="Add More Workers" icon="users">
+    Scale horizontally by running multiple worker instances
+  </Card>
+  
+  <Card title="Optimize Job Processing" icon="code">
+    Profile and optimize slow job processors
+  </Card>
+  
+  <Card title="Use Redis Cluster" icon="server">
+    Distribute load across multiple Redis nodes
+  </Card>
+</CardGroup>
+
+## Debugging Tips
+
+<Steps>
+  <Step title="Enable debug logging">
+    ```typescript
+    import { Queue, Worker } from 'bullmq';
+    
+    const queue = new Queue('myqueue', {
+      connection: {
+        // Add logging
+        lazyConnect: false,
+      },
+    });
+    
+    queue.on('error', (err) => console.error('Queue error:', err));
+    queue.on('waiting', (job) => console.log('Job waiting:', job.id));
+    
+    const worker = new Worker('myqueue', processor);
+    
+    worker.on('active', (job) => console.log('Job active:', job.id));
+    worker.on('completed', (job) => console.log('Job completed:', job.id));
+    worker.on('failed', (job, err) => console.log('Job failed:', job.id, err));
+    ```
+  </Step>
+  
+  <Step title="Check job state">
+    ```typescript
+    const job = await queue.getJob(jobId);
+    
+    if (job) {
+      console.log('Job state:', await job.getState());
+      console.log('Job data:', job.data);
+      console.log('Job stacktrace:', job.stacktrace);
+      console.log('Job attempts:', job.attemptsMade);
+    }
+    ```
+  </Step>
+  
+  <Step title="Inspect Redis directly">
+    ```bash
+    # Connect to Redis
+    redis-cli
+    
+    # List all BullMQ keys
+    KEYS bull:myqueue:*
+    
+    # Check queue length
+    LLEN bull:myqueue:wait
+    
+    # Get job data
+    HGETALL bull:myqueue:1234
+    ```
+  </Step>
+</Steps>
+
+## Related Resources
+
+<CardGroup cols={2}>
+  <Card title="Going to Production" icon="rocket" href="/operations/going-to-production">
+    Production deployment best practices
+  </Card>
+  <Card title="Redis Configuration" icon="database" href="/redis/compatibility">
+    Redis compatibility and configuration
+  </Card>
+</CardGroup>

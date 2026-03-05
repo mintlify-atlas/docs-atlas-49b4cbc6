@@ -1,0 +1,309 @@
+---
+title: "Repeatable Jobs"
+description: "Schedule recurring jobs with cron patterns or fixed intervals"
+---
+
+<Warning>
+From BullMQ version 5.16.0 onwards, repeatable job APIs are deprecated in favor of [Job Schedulers](/job-schedulers), which provide a more cohesive and robust API for handling repeatable jobs.
+</Warning>
+
+## Overview
+
+Repeatable jobs are a special type of meta job that keep repeating according to a predefined schedule. Adding a job with the `repeat` option:
+
+1. Creates a Repeatable Job configuration
+2. Schedules a regular delayed job for the job's first run
+
+The first run is scheduled "on the hour" - for example, a job repeating every 15 minutes created at 4:07 will first run at 4:15, then 4:30, and so on.
+
+<Info>
+Repeatable Job configurations are not actual jobs, so they won't show up in methods like `getJobs()`. Use `getRepeatableJobs()` to manage them instead.
+</Info>
+
+## Scheduling Methods
+
+There are two ways to specify a repeatable job's pattern:
+
+### Cron Pattern
+
+Uses [cron-parser](https://www.npmjs.com/package/cron-parser)'s "unix cron w/ optional seconds" format:
+
+```typescript
+import { Queue } from 'bullmq';
+
+const myQueue = new Queue('Paint');
+
+// Repeat job once every day at 3:15 (am)
+await myQueue.add(
+  'submarine',
+  { color: 'yellow' },
+  {
+    repeat: {
+      pattern: '0 15 3 * * *',
+    },
+  },
+);
+```
+
+### Fixed Interval
+
+Specify milliseconds between repetitions:
+
+```typescript
+// Repeat job every 10 seconds but no more than 100 times
+await myQueue.add(
+  'bird',
+  { color: 'bird' },
+  {
+    repeat: {
+      every: 10000,
+      limit: 100,
+    },
+  },
+);
+```
+
+## Important Considerations
+
+<CardGroup cols={2}>
+
+<Card title="No Duplicates" icon="copy">
+  BullMQ won't add the same repeatable job if the repeat options are identical.
+</Card>
+
+<Card title="No Accumulation" icon="layer-group">
+  If no workers are running, repeatable jobs won't accumulate. They'll resume when workers come back online.
+</Card>
+
+<Card title="Manual Removal" icon="trash">
+  Use `removeRepeatable()` or `removeRepeatableByKey()` to remove repeatable job configurations.
+</Card>
+
+<Card title="Unique IDs" icon="fingerprint">
+  Repeatable jobs require unique IDs to avoid being considered duplicates.
+</Card>
+
+</CardGroup>
+
+## Removing Repeatable Jobs
+
+```typescript
+import { Queue } from 'bullmq';
+
+const repeat = { pattern: '*/1 * * * * *' };
+const myQueue = new Queue('Paint');
+
+const job1 = await myQueue.add('red', { foo: 'bar' }, { repeat });
+const job2 = await myQueue.add('blue', { foo: 'baz' }, { repeat });
+
+// Remove by key
+const isRemoved1 = await myQueue.removeRepeatableByKey(job1.repeatJobKey);
+
+// Remove by name and options
+const isRemoved2 = await queue.removeRepeatable('blue', repeat);
+```
+
+## Get All Repeatable Jobs
+
+```typescript
+import { Queue } from 'bullmq';
+
+const myQueue = new Queue('Paint');
+
+const repeatableJobs = await myQueue.getRepeatableJobs();
+```
+
+## Job IDs with Repeatable Jobs
+
+The `jobId` option works differently for repeatable jobs. It's used to **generate** unique IDs rather than being the unique ID itself:
+
+```typescript
+import { Queue } from 'bullmq';
+
+const myQueue = new Queue('Paint');
+
+// Two repeatable jobs with same name and options but different jobIds
+await myQueue.add(
+  'bird',
+  { color: 'bird' },
+  {
+    repeat: {
+      every: 10000,
+      limit: 100,
+    },
+    jobId: 'colibri',
+  },
+);
+
+await myQueue.add(
+  'bird',
+  { color: 'bird' },
+  {
+    repeat: {
+      every: 10000,
+      limit: 100,
+    },
+    jobId: 'pigeon',
+  },
+);
+```
+
+## Slow Repeatable Jobs
+
+If job processing time exceeds the repeat frequency:
+
+```typescript
+// Job repeats every 1 second but takes 5 seconds to process
+await myQueue.add(
+  'slowJob',
+  { data: 'test' },
+  {
+    repeat: { every: 1000 },
+  },
+);
+```
+
+<Accordion title="What happens?">
+  With 1 worker:
+  - Next job is added to the delayed set when the current job starts processing
+  - The worker takes 5 seconds to complete
+  - Next job waits in the queue until the worker is free
+  - Effective frequency: every 5 seconds (not 1 second)
+  
+  With 5 workers:
+  - Workers can maintain the desired 1 second frequency
+  - Each worker processes jobs in parallel
+</Accordion>
+
+## Custom Repeat Strategy
+
+You can define a custom strategy for scheduling repeatable jobs. Here's an example using RRULE:
+
+```typescript
+import { Queue, Worker } from 'bullmq';
+import { rrulestr } from 'rrule';
+
+const settings = {
+  repeatStrategy: (millis, opts) => {
+    const currentDate =
+      opts.startDate && new Date(opts.startDate) > new Date(millis)
+        ? new Date(opts.startDate)
+        : new Date(millis);
+    const rrule = rrulestr(opts.pattern);
+    if (rrule.origOptions.count && !rrule.origOptions.dtstart) {
+      throw new Error('DTSTART must be defined to use COUNT with rrule');
+    }
+
+    const next_occurrence = rrule.after(currentDate, false);
+    return next_occurrence?.getTime();
+  },
+};
+
+const myQueue = new Queue('Paint', { settings });
+
+// Repeat job every 10 seconds using RRULE
+await myQueue.add(
+  'bird',
+  { color: 'green' },
+  {
+    repeat: {
+      pattern: 'RRULE:FREQ=SECONDLY;INTERVAL=10;WKST=MO',
+    },
+    jobId: 'colibri',
+  },
+);
+
+const worker = new Worker(
+  'Paint',
+  async () => {
+    doSomething();
+  },
+  { settings },
+);
+```
+
+<Warning>
+The repeat strategy setting must be provided in **both** Queue and Worker classes:
+- Queue: Calculates the first iteration when adding the job
+- Worker: Calculates subsequent iterations during processing
+</Warning>
+
+<Info>
+The repeat strategy function receives an optional `jobName` third parameter.
+</Info>
+
+## Custom Repeatable Key
+
+By default, repeatable keys are generated based on repeat options and job name. You can provide a custom key to differentiate repeatable jobs with the same repeat options:
+
+```typescript
+import { Queue } from 'bullmq';
+
+const myQueue = new Queue('Paint', { connection });
+
+// Repeat job every 10 seconds
+await myQueue.add(
+  'bird',
+  { color: 'gray' },
+  {
+    repeat: {
+      every: 10_000,
+      key: 'colibri',
+    },
+  },
+);
+
+// Another job with same interval but different key
+await myQueue.add(
+  'bird',
+  { color: 'brown' },
+  {
+    repeat: {
+      every: 10_000,
+      key: 'eagle',
+    },
+  },
+);
+```
+
+### Updating Repeatable Job Options
+
+Using custom keys allows updating existing repeatable jobs:
+
+```typescript
+// Update the 'eagle' job to repeat every 25 seconds instead of 10
+await myQueue.add(
+  'bird',
+  { color: 'turquoise' },
+  {
+    repeat: {
+      every: 25_000,
+      key: 'eagle',
+    },
+  },
+);
+```
+
+This updates the existing repeatable job's interval without creating a new one. Any delayed job for the old interval is replaced with the new settings.
+
+## Read More
+
+<CardGroup cols={2}>
+
+<Card title="Repeat Strategy API" icon="code" href="https://api.docs.bullmq.io/types/v5.RepeatStrategy.html">
+  View the Repeat Strategy type definition
+</Card>
+
+<Card title="Remove Repeatable Job" icon="trash" href="https://api.docs.bullmq.io/classes/v5.Queue.html#removerepeatable">
+  removeRepeatable API Reference
+</Card>
+
+<Card title="Remove by Key" icon="key" href="https://api.docs.bullmq.io/classes/v5.Queue.html#removerepeatablebykey">
+  removeRepeatableByKey API Reference
+</Card>
+
+<Card title="Job Schedulers" icon="calendar" href="/job-schedulers">
+  Modern approach to scheduled jobs (recommended)
+</Card>
+
+</CardGroup>

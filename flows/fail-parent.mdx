@@ -1,0 +1,322 @@
+---
+title: 'Fail Parent'
+description: 'Make parent jobs fail immediately when specific children fail'
+---
+
+In certain workflows, you may need a parent job to fail immediately if any of its child jobs fail. The `failParentOnFailure` option allows you to achieve this behavior. When set to true on a child job, it ensures that if the child fails, its parent job is also marked as failed.
+
+## Key Behavior
+
+<CardGroup cols={2}>
+  <Card title="Selective" icon="filter">
+    Only children with `failParentOnFailure: true` will trigger parent failure
+  </Card>
+  <Card title="Recursive" icon="rotate">
+    Failure propagates up the hierarchy to grandparents and beyond
+  </Card>
+  <Card title="Immediate" icon="bolt">
+    Parent fails as soon as qualifying child fails
+  </Card>
+  <Card title="Lazy Marking" icon="clock">
+    Parent is marked failed lazily when next processed
+  </Card>
+</CardGroup>
+
+## Basic Usage
+
+```typescript
+import { FlowProducer } from 'bullmq';
+
+const flow = new FlowProducer({ connection });
+
+const originalTree = await flow.add({
+  name: 'root-job',
+  queueName: 'topQueueName',
+  data: {},
+  children: [
+    {
+      name: 'child-job',
+      data: { idx: 0, foo: 'bar' },
+      queueName: 'childrenQueueName',
+      // This child will fail its parent if it fails
+      opts: { failParentOnFailure: true },
+    },
+    {
+      name: 'another-child',
+      data: { idx: 1, foo: 'foo' },
+      queueName: 'childrenQueueName',
+      // No failParentOnFailure; its failure won't affect the parent
+    },
+  ],
+});
+```
+
+## Recursive Failure Propagation
+
+The failure can cascade through multiple levels of the hierarchy:
+
+```typescript
+const flow = new FlowProducer({ connection });
+
+const originalTree = await flow.add({
+  name: 'root-job',
+  queueName: 'topQueueName',
+  data: {},
+  children: [
+    {
+      name: 'child-job',
+      data: { idx: 0, foo: 'bar' },
+      queueName: 'childrenQueueName',
+      // This child will fail its parent if it fails
+      opts: { failParentOnFailure: true },
+      children: [
+        {
+          name: 'grandchild-job-1',
+          data: { idx: 1, foo: 'bah' },
+          queueName: 'grandChildrenQueueName',
+          // This grandchild will fail its parent if it fails
+          opts: { failParentOnFailure: true },
+        },
+        {
+          name: 'grandchild-job-2',
+          data: { idx: 2, foo: 'baz' },
+          queueName: 'grandChildrenQueueName',
+          // No failParentOnFailure; its failure won't affect the parent
+        },
+      ],
+    },
+    {
+      name: 'child-job-2',
+      data: { idx: 3, foo: 'foo' },
+      queueName: 'childrenQueueName',
+      // No failParentOnFailure; its failure won't affect the parent
+    },
+  ],
+});
+```
+
+<Info>
+  As soon as a child with this option fails, the parent job will be marked as failed lazily. A worker must process the parent job before it transitions to the failed state. The failure will result in an **UnrecoverableError** with the message **"child {childKey} failed"**.
+</Info>
+
+## How It Works
+
+Understanding the failure propagation flow:
+
+1. **grandchild-job-1 fails** → Its parent (child-job) fails because `failParentOnFailure: true`
+2. **child-job fails** → Since it also has `failParentOnFailure: true`, the root-job fails
+3. **grandchild-job-2 fails** → child-job does NOT fail (no `failParentOnFailure` on grandchild-job-2)
+4. **child-job-2 fails** → root-job remains unaffected (no `failParentOnFailure` on child-job-2)
+
+<Steps>
+  <Step title="Child with failParentOnFailure fails">
+    A child job with `failParentOnFailure: true` encounters an error and moves to failed state.
+  </Step>
+  <Step title="Parent is marked for failure">
+    BullMQ marks the parent job to fail, but the transition happens lazily.
+  </Step>
+  <Step title="Worker processes parent">
+    When a worker attempts to process the parent, it immediately fails with an UnrecoverableError.
+  </Step>
+  <Step title="Recursive validation">
+    If the parent also has `failParentOnFailure: true`, the process repeats up the hierarchy.
+  </Step>
+</Steps>
+
+## Use Cases
+
+<AccordionGroup>
+  <Accordion title="Critical Path Dependencies">
+    When certain child jobs are critical to the workflow and their failure should abort the entire process:
+
+    ```typescript
+    const flow = await flowProducer.add({
+      name: 'deploy-application',
+      queueName: 'deployment',
+      data: {},
+      children: [
+        {
+          name: 'build-code',
+          queueName: 'build',
+          data: {},
+          // Critical: if build fails, deployment must fail
+          opts: { failParentOnFailure: true },
+        },
+        {
+          name: 'run-tests',
+          queueName: 'testing',
+          data: {},
+          // Critical: if tests fail, deployment must fail
+          opts: { failParentOnFailure: true },
+        },
+        {
+          name: 'update-docs',
+          queueName: 'documentation',
+          data: {},
+          // Not critical: docs can fail without affecting deployment
+        },
+      ],
+    });
+    ```
+  </Accordion>
+
+  <Accordion title="Payment Processing">
+    Ensure payment workflows fail fast when critical validation steps fail:
+
+    ```typescript
+    const paymentFlow = await flowProducer.add({
+      name: 'process-payment',
+      queueName: 'payments',
+      data: { orderId: '12345' },
+      children: [
+        {
+          name: 'validate-card',
+          queueName: 'validation',
+          data: {},
+          // Critical: invalid card should fail payment
+          opts: { failParentOnFailure: true },
+        },
+        {
+          name: 'check-fraud',
+          queueName: 'fraud-detection',
+          data: {},
+          // Critical: fraud detection failure should fail payment
+          opts: { failParentOnFailure: true },
+        },
+        {
+          name: 'send-receipt',
+          queueName: 'notifications',
+          data: {},
+          // Not critical: receipt failure shouldn't fail payment
+        },
+      ],
+    });
+    ```
+  </Accordion>
+
+  <Accordion title="Data Pipeline with Quality Gates">
+    Create data pipelines where quality checks must pass:
+
+    ```typescript
+    const pipeline = await flowProducer.add({
+      name: 'publish-data',
+      queueName: 'publishing',
+      data: {},
+      children: [
+        {
+          name: 'validate-schema',
+          queueName: 'validation',
+          data: {},
+          opts: { failParentOnFailure: true },
+        },
+        {
+          name: 'quality-check',
+          queueName: 'quality',
+          data: {},
+          opts: { failParentOnFailure: true },
+        },
+        {
+          name: 'generate-preview',
+          queueName: 'preview',
+          data: {},
+          // Preview generation is optional
+        },
+      ],
+    });
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Error Handling
+
+When a parent fails due to a child failure, you can handle it in the parent worker:
+
+```typescript
+import { Worker, UnrecoverableError } from 'bullmq';
+
+const parentWorker = new Worker('topQueueName', async job => {
+  try {
+    const childrenValues = await job.getChildrenValues();
+    // Process normally if all children succeeded
+    return processChildren(childrenValues);
+  } catch (error) {
+    if (error instanceof UnrecoverableError) {
+      // Check if error message indicates child failure
+      if (error.message.includes('child')) {
+        console.error('Parent failed due to child failure:', error.message);
+        // Perform cleanup or notification
+        await notifyFailure(job.data);
+      }
+    }
+    throw error;
+  }
+});
+```
+
+## Combining with Other Options
+
+<Warning>
+  `failParentOnFailure` takes precedence over other failure handling options like `removeDependencyOnFailure` and `ignoreDependencyOnFailure`. If a child has `failParentOnFailure: true`, the parent will fail regardless of other options.
+</Warning>
+
+You can combine different strategies for different children:
+
+```typescript
+const flow = await flowProducer.add({
+  name: 'complex-workflow',
+  queueName: 'workflow',
+  data: {},
+  children: [
+    {
+      name: 'critical-task',
+      queueName: 'tasks',
+      data: {},
+      opts: { failParentOnFailure: true }, // Parent must fail if this fails
+    },
+    {
+      name: 'optional-task',
+      queueName: 'tasks',
+      data: {},
+      opts: { ignoreDependencyOnFailure: true }, // Parent can ignore this failure
+    },
+    {
+      name: 'best-effort-task',
+      queueName: 'tasks',
+      data: {},
+      opts: { removeDependencyOnFailure: true }, // Remove from dependencies if fails
+    },
+  ],
+});
+```
+
+## Monitoring Failed Parents
+
+You can monitor and handle parent failures:
+
+```typescript
+import { Queue, QueueEvents } from 'bullmq';
+
+const queue = new Queue('topQueueName', { connection });
+const queueEvents = new QueueEvents('topQueueName', { connection });
+
+queueEvents.on('failed', async ({ jobId, failedReason }) => {
+  const job = await queue.getJob(jobId);
+  
+  if (failedReason.includes('child')) {
+    console.log(`Parent job ${jobId} failed due to child failure`);
+    
+    // Get information about failed children
+    const dependencies = await job.getDependencies({
+      failed: { count: 100 },
+    });
+    
+    console.log('Failed children:', dependencies.failed);
+  }
+});
+```
+
+## API Reference
+
+- [Add Flow API Reference](https://api.docs.bullmq.io/classes/v5.FlowProducer.html#add)
+- [FlowProducer API Reference](https://api.docs.bullmq.io/classes/v5.FlowProducer.html)
+- [Job Options API Reference](https://api.docs.bullmq.io/interfaces/v5.JobsOptions.html)

@@ -1,97 +1,122 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: "BullMQ - Premium Message Queue for Node.js"
+description: "Fast, reliable Redis-based distributed queue for Node.js with support for multiple languages"
 ---
 
-## Setting up
+<div className="relative overflow-hidden rounded-lg border border-white/10 bg-gradient-to-br from-purple-900/20 to-indigo-900/20 p-8 shadow-2xl">
+  <div className="relative z-10">
+    <h1 className="mb-4 text-5xl font-bold text-white">BullMQ</h1>
+    <p className="mb-8 text-xl text-gray-200">
+      The fastest, most reliable Redis-based distributed queue for Node.js. Carefully written for rock solid stability and atomicity.
+    </p>
+    <div className="flex gap-4">
+      <a
+        href="/quick-start"
+        className="rounded bg-purple-700 px-6 py-3 font-semibold text-white transition hover:bg-purple-600"
+      >
+        Get Started
+      </a>
+      <a
+        href="https://github.com/taskforcesh/bullmq"
+        className="rounded border border-white/20 bg-transparent px-6 py-3 font-semibold text-white transition hover:bg-white/10"
+      >
+        View on GitHub
+      </a>
+    </div>
+  </div>
+</div>
 
-Get your documentation site up and running in minutes.
+## Why BullMQ?
 
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
+BullMQ is a Node.js library that implements a fast and robust queue system built on top of Redis. It helps resolve many modern microservices architecture challenges with exactly-once queue semantics, horizontal scalability, and high performance.
 
-## Make it yours
-
-Design a docs site that looks great and empowers your users.
-
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={2}>
+  <Card title="Lightning Fast" icon="bolt">
+    Optimized Redis scripts and pipelining deliver maximum throughput with minimal CPU usage
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="Rock Solid Reliability" icon="shield">
+    Exactly-once delivery semantics with automatic recovery from process crashes
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="Horizontally Scalable" icon="arrows-left-right">
+    Add more workers to process jobs in parallel across multiple servers
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="Multi-Language" icon="globe">
+    Native support for Node.js, Python, Elixir, and PHP implementations
   </Card>
-</Columns>
+</CardGroup>
 
-## Create beautiful pages
+## Key Features
 
-Everything you need to create world-class documentation.
+<CardGroup cols={3}>
+  <Card title="Job Scheduling" icon="clock" href="/jobs/delayed">
+    Schedule jobs for future execution or set up repeatable jobs with cron patterns
+  </Card>
+  <Card title="Flow Control" icon="diagram-project" href="/flows/overview">
+    Create complex job dependencies with parent-child relationships
+  </Card>
+  <Card title="Rate Limiting" icon="gauge" href="/advanced/rate-limiting">
+    Control job processing rates to prevent overwhelming downstream services
+  </Card>
+  <Card title="Job Priorities" icon="arrow-up-1-9" href="/jobs/prioritized">
+    Process important jobs first with flexible priority levels
+  </Card>
+  <Card title="Retries & Backoff" icon="rotate-right" href="/jobs/retrying">
+    Automatic retry logic with exponential backoff strategies
+  </Card>
+  <Card title="Metrics & Telemetry" icon="chart-line" href="/advanced/metrics">
+    Built-in metrics and OpenTelemetry support for monitoring
+  </Card>
+</CardGroup>
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
-  </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
-  </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
+## Quick Example
 
-## Need inspiration?
+Get started with BullMQ in just a few lines of code:
 
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+<CodeGroup>
+
+```typescript Producer
+import { Queue } from 'bullmq';
+
+const queue = new Queue('image-processing');
+
+// Add a job to the queue
+await queue.add('resize', {
+  imagePath: '/path/to/image.jpg',
+  width: 800,
+  height: 600
+});
+```
+
+```typescript Worker
+import { Worker } from 'bullmq';
+
+const worker = new Worker('image-processing', async job => {
+  if (job.name === 'resize') {
+    // Process the image resize job
+    await resizeImage(job.data);
+  }
+});
+```
+
+</CodeGroup>
+
+## Trusted by Leading Companies
+
+BullMQ is used by organizations around the world, including Microsoft, Vendure, Datawrapper, NestJS, Langfuse, and many more.
+
+## Get Started
+
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/quick-start">
+    Get up and running with BullMQ in under 5 minutes
+  </Card>
+  <Card title="Core Concepts" icon="book" href="/concepts/queues">
+    Learn about queues, workers, jobs, and events
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/queue">
+    Explore the complete API documentation
+  </Card>
+  <Card title="Patterns & Best Practices" icon="lightbulb" href="/patterns/idempotent-jobs">
+    Learn proven patterns for production use
+  </Card>
+</CardGroup>

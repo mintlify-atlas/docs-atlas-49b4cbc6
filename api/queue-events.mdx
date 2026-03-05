@@ -1,0 +1,328 @@
+---
+title: 'QueueEvents'
+description: 'Listen to global events emitted by a queue'
+---
+
+## Overview
+
+The QueueEvents class is used for listening to global events emitted by a queue. This class requires a dedicated Redis connection.
+
+## Constructor
+
+```typescript
+new QueueEvents(
+  name: string,
+  opts?: QueueEventsOptions
+)
+```
+
+<ParamField path="name" type="string" required>
+  The name of the queue to listen to
+</ParamField>
+
+<ParamField path="opts" type="QueueEventsOptions">
+  Configuration options for queue events
+</ParamField>
+
+## Example
+
+```typescript
+import { QueueEvents } from 'bullmq';
+
+const queueEvents = new QueueEvents('myQueue', {
+  connection: {
+    host: 'localhost',
+    port: 6379,
+  },
+});
+
+queueEvents.on('completed', ({ jobId, returnvalue }) => {
+  console.log(`Job ${jobId} completed with result:`, returnvalue);
+});
+
+queueEvents.on('failed', ({ jobId, failedReason }) => {
+  console.log(`Job ${jobId} failed:`, failedReason);
+});
+```
+
+## Methods
+
+### run
+
+Manually starts the event consumption loop.
+
+```typescript
+run(): Promise<void>
+```
+
+<Note>
+  You only need to call this if you set `autorun: false` in the constructor options.
+</Note>
+
+### close
+
+Stops consuming events and closes the Redis connection.
+
+```typescript
+close(): Promise<void>
+```
+
+## Events
+
+The QueueEvents class extends EventEmitter and emits the following events:
+
+### added
+
+Emitted when a job is created and added to the queue.
+
+```typescript
+queueEvents.on('added', ({ jobId, name }, id) => {
+  console.log(`Job ${jobId} (${name}) was added`);
+});
+```
+
+<ParamField path="args.jobId" type="string">
+  The unique identifier of the job
+</ParamField>
+
+<ParamField path="args.name" type="string">
+  The name of the job
+</ParamField>
+
+<ParamField path="id" type="string">
+  The event stream ID
+</ParamField>
+
+### active
+
+Emitted when a job enters the active state.
+
+```typescript
+queueEvents.on('active', ({ jobId, prev }, id) => {
+  console.log(`Job ${jobId} is now active`);
+});
+```
+
+<ParamField path="args.jobId" type="string">
+  The unique identifier of the job
+</ParamField>
+
+<ParamField path="args.prev" type="string">
+  The previous state of the job
+</ParamField>
+
+### completed
+
+Emitted when a job has successfully completed.
+
+```typescript
+queueEvents.on('completed', ({ jobId, returnvalue, prev }, id) => {
+  console.log(`Job ${jobId} completed:`, returnvalue);
+});
+```
+
+<ParamField path="args.jobId" type="string">
+  The unique identifier of the job
+</ParamField>
+
+<ParamField path="args.returnvalue" type="any">
+  The return value of the job (JSON parsed)
+</ParamField>
+
+<ParamField path="args.prev" type="string">
+  The previous state of the job
+</ParamField>
+
+### failed
+
+Emitted when a job has failed.
+
+```typescript
+queueEvents.on('failed', ({ jobId, failedReason, prev }, id) => {
+  console.log(`Job ${jobId} failed:`, failedReason);
+});
+```
+
+<ParamField path="args.jobId" type="string">
+  The unique identifier of the job
+</ParamField>
+
+<ParamField path="args.failedReason" type="string">
+  The reason or message describing why the job failed
+</ParamField>
+
+<ParamField path="args.prev" type="string">
+  The previous state of the job
+</ParamField>
+
+### progress
+
+Emitted when a job updates its progress.
+
+```typescript
+queueEvents.on('progress', ({ jobId, data }, id) => {
+  console.log(`Job ${jobId} progress:`, data);
+});
+```
+
+<ParamField path="args.jobId" type="string">
+  The unique identifier of the job
+</ParamField>
+
+<ParamField path="args.data" type="number | object">
+  The progress data
+</ParamField>
+
+### delayed
+
+Emitted when a job is scheduled with a delay.
+
+```typescript
+queueEvents.on('delayed', ({ jobId, delay }, id) => {
+  console.log(`Job ${jobId} delayed by ${delay}ms`);
+});
+```
+
+<ParamField path="args.jobId" type="string">
+  The unique identifier of the job
+</ParamField>
+
+<ParamField path="args.delay" type="number">
+  The delay duration in milliseconds
+</ParamField>
+
+### waiting
+
+Emitted when a job enters the waiting state.
+
+```typescript
+queueEvents.on('waiting', ({ jobId, prev }, id) => {
+  console.log(`Job ${jobId} is waiting`);
+});
+```
+
+### waiting-children
+
+Emitted when a job is waiting for its children to complete.
+
+```typescript
+queueEvents.on('waiting-children', ({ jobId }, id) => {
+  console.log(`Job ${jobId} waiting for children`);
+});
+```
+
+### removed
+
+Emitted when a job is removed from the queue.
+
+```typescript
+queueEvents.on('removed', ({ jobId, prev }, id) => {
+  console.log(`Job ${jobId} removed`);
+});
+```
+
+### drained
+
+Emitted when the queue has drained its waiting list.
+
+```typescript
+queueEvents.on('drained', (id) => {
+  console.log('Queue is drained');
+});
+```
+
+### paused
+
+Emitted when the queue is paused.
+
+```typescript
+queueEvents.on('paused', ({}, id) => {
+  console.log('Queue paused');
+});
+```
+
+### resumed
+
+Emitted when the queue is resumed.
+
+```typescript
+queueEvents.on('resumed', ({}, id) => {
+  console.log('Queue resumed');
+});
+```
+
+### stalled
+
+Emitted when a job has stalled.
+
+```typescript
+queueEvents.on('stalled', ({ jobId }, id) => {
+  console.log(`Job ${jobId} stalled`);
+});
+```
+
+### retries-exhausted
+
+Emitted when a job has exhausted its retry attempts.
+
+```typescript
+queueEvents.on('retries-exhausted', ({ jobId, attemptsMade }, id) => {
+  console.log(`Job ${jobId} exhausted retries`);
+});
+```
+
+### duplicated
+
+Emitted when a job is not created because a job with the same ID already exists.
+
+```typescript
+queueEvents.on('duplicated', ({ jobId }, id) => {
+  console.log(`Job ${jobId} duplicated`);
+});
+```
+
+### deduplicated
+
+Emitted when a job is not added because a job with the same deduplication ID exists.
+
+```typescript
+queueEvents.on('deduplicated', ({ jobId, deduplicationId, deduplicatedJobId }, id) => {
+  console.log(`Job ${jobId} deduplicated`);
+});
+```
+
+### cleaned
+
+Emitted when jobs are cleaned from the queue.
+
+```typescript
+queueEvents.on('cleaned', ({ count }, id) => {
+  console.log(`${count} jobs cleaned`);
+});
+```
+
+### error
+
+Emitted when an error occurs in the Redis backend.
+
+```typescript
+queueEvents.on('error', (error: Error) => {
+  console.error('Queue events error:', error);
+});
+```
+
+## Job-Specific Events
+
+You can also listen to events for a specific job:
+
+```typescript
+const jobId = 'my-job-id';
+
+queueEvents.on(`completed:${jobId}`, ({ returnvalue }, id) => {
+  console.log('My specific job completed:', returnvalue);
+});
+
+queueEvents.on(`failed:${jobId}`, ({ failedReason }, id) => {
+  console.log('My specific job failed:', failedReason);
+});
+```

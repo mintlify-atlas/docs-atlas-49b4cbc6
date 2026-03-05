@@ -1,0 +1,460 @@
+---
+title: Migrating to Newer Versions
+description: Strategies for upgrading BullMQ to newer versions in production
+---
+
+BullMQ's team regularly releases new versions with bug fixes, new features, and occasionally breaking changes. This guide helps you upgrade safely while maintaining service continuity in production.
+
+<Info>
+Always consult the [Changelog](https://github.com/taskforcesh/bullmq/blob/master/CHANGELOG.md) before upgrading to understand the extent of changes and any special considerations.
+</Info>
+
+## Upgrade Strategy by Type
+
+The approach you take depends on the type of upgrade:
+
+<Tabs>
+  <Tab title="Bugfix Upgrades">
+    **Version Pattern:** Micro version increase (e.g., `3.14.4` → `3.14.7`)
+    
+    **Strategy:** Simple update, no special considerations
+    
+    <Steps>
+      <Step title="Update your package">
+        ```bash
+        npm install bullmq@latest
+        ```
+      </Step>
+      
+      <Step title="Deploy to all instances">
+        While not critical that all instances run the same version, we recommend it for consistency.
+      </Step>
+    </Steps>
+    
+    <Info>
+    Bugfix releases follow [Semantic Versioning](https://semver.org/) and contain no breaking changes or new features.
+    </Info>
+  </Tab>
+  
+  <Tab title="New Feature Upgrades">
+    **Version Pattern:** Minor version increase (e.g., `3.14.7` → `3.20.5`)
+    
+    **Strategy:** Update all instances, then deploy code using new features
+    
+    <Steps>
+      <Step title="Update BullMQ on all instances">
+        ```bash
+        npm install bullmq@3.20.5
+        ```
+      </Step>
+      
+      <Step title="Deploy updated version">
+        Ensure all Queue and Worker instances run the new version before using new features.
+      </Step>
+      
+      <Step title="Verify all instances are updated">
+        Check that all services are running the new version.
+      </Step>
+      
+      <Step title="Deploy code using new features">
+        Only after confirming all instances are updated, deploy code that depends on the new functionality.
+      </Step>
+    </Steps>
+    
+    <Warning>
+    If you deploy code using new features before all instances are updated, older Workers might fail when encountering jobs that use features they don't understand.
+    </Warning>
+  </Tab>
+  
+  <Tab title="Breaking Changes">
+    **Version Pattern:** Major version increase (e.g., `3.x.x` → `4.0.0`)
+    
+    **Strategy:** Depends on the type of breaking change
+    
+    Breaking changes fall into two categories:
+    
+    ### API Breaking Changes
+    
+    These involve:
+    - Altered method parameters
+    - Removed methods
+    - Different operational patterns
+    
+    **How to handle:**
+    
+    <Steps>
+      <Step title="Review the changelog">
+        Read the [changelog](https://github.com/taskforcesh/bullmq/blob/master/CHANGELOG.md) for all API changes.
+      </Step>
+      
+      <Step title="Update your code">
+        Modify your code to match the new API.
+        
+        ```typescript
+        // Example: API change
+        // Before v4
+        await queue.add('job', data, { removeOnComplete: true });
+        
+        // After v4 (hypothetical)
+        await queue.add('job', data, { 
+          remove: { onComplete: true } 
+        });
+        ```
+      </Step>
+      
+      <Step title="Run tests">
+        Run your BullMQ-dependent unit tests to catch issues.
+      </Step>
+      
+      <Step title="Fix TypeScript errors">
+        If using TypeScript, compilation errors will surface.
+      </Step>
+      
+      <Step title="Deploy">
+        Deploy the updated code and BullMQ version together.
+      </Step>
+    </Steps>
+    
+    ### Data Structure Breaking Changes
+    
+    These alter the underlying queue structure in Redis and are more challenging.
+    
+    **Types:**
+    
+    <AccordionGroup>
+      <Accordion title="Additive Changes">
+        Introduce new data structures that older versions don't understand.
+        
+        **Strategy:** Similar to new feature upgrades
+        
+        1. Upgrade all instances to the new version
+        2. The new structures will be created automatically
+        3. Older versions ignore structures they don't understand
+      </Accordion>
+      
+      <Accordion title="Destructive Changes">
+        Change or remove existing data structures.
+        
+        **Strategy:** Requires careful planning
+        
+        <Warning>
+        Destructive changes can make rollback impossible if the upgrade fails. Always have a backup strategy.
+        </Warning>
+        
+        See [Advanced Strategies](#advanced-strategies) below for handling destructive changes.
+      </Accordion>
+    </AccordionGroup>
+  </Tab>
+</Tabs>
+
+## General Upgrade Advice
+
+<Warning>
+**Avoid large version jumps.** Upgrade incrementally whenever possible.
+</Warning>
+
+### Recommended Upgrade Path
+
+If you're on version `1.3.7` and want to reach `4.2.6`:
+
+<Steps>
+  <Step title="Apply bugfix releases">
+    ```bash
+    npm install bullmq@1.3.12
+    ```
+    
+    Upgrade through all bugfix releases first (e.g., `1.3.7` → `1.3.12`).
+  </Step>
+  
+  <Step title="Move to latest minor version">
+    ```bash
+    npm install bullmq@1.20.5
+    ```
+    
+    Proceed to new feature releases (e.g., `1.3.12` → `1.20.5`).
+  </Step>
+  
+  <Step title="Upgrade major versions incrementally">
+    ```bash
+    npm install bullmq@2.0.0
+    npm install bullmq@3.0.0
+    npm install bullmq@4.2.6
+    ```
+    
+    Only then tackle major releases that include breaking changes.
+  </Step>
+</Steps>
+
+## Advanced Strategies
+
+For challenging upgrades with destructive breaking changes:
+
+### Strategy 1: Pause/Upgrade/Unpause
+
+Suitable when your business can tolerate a brief pause:
+
+<Steps>
+  <Step title="Pause all queues">
+    ```typescript
+    import { Queue } from 'bullmq';
+    
+    const queue = new Queue('myqueue');
+    await queue.pause();
+    ```
+  </Step>
+  
+  <Step title="Wait for active jobs to complete">
+    ```typescript
+    let activeCount = await queue.getActiveCount();
+    
+    while (activeCount > 0) {
+      console.log(`Waiting for ${activeCount} active jobs...`);
+      await new Promise(resolve => setTimeout(resolve, 5000));
+      activeCount = await queue.getActiveCount();
+    }
+    
+    console.log('All jobs completed');
+    ```
+  </Step>
+  
+  <Step title="Perform the upgrade">
+    Deploy the new BullMQ version to all instances.
+  </Step>
+  
+  <Step title="Unpause queues">
+    ```typescript
+    await queue.resume();
+    ```
+  </Step>
+</Steps>
+
+<Warning>
+This strategy is less useful if breaking changes affect Queue instances. Always consult the changelog.
+</Warning>
+
+### Strategy 2: Use New Queues
+
+The most drastic but safest solution:
+
+<Steps>
+  <Step title="Create new queues with different names">
+    ```typescript
+    // Option 1: Different queue name
+    const oldQueue = new Queue('myqueue');
+    const newQueue = new Queue('myqueue-v2');
+    
+    // Option 2: Different prefix
+    const newQueue = new Queue('myqueue', {
+      prefix: 'bull-v2',
+    });
+    
+    // Option 3: Different Redis host
+    const newQueue = new Queue('myqueue', {
+      connection: {
+        host: 'new-redis.example.com',
+        port: 6379,
+      },
+    });
+    ```
+  </Step>
+  
+  <Step title="Run both versions in parallel">
+    Maintain two versions of your service:
+    - **Old service:** Older BullMQ version with old queues
+    - **New service:** Latest BullMQ version with new queues
+    
+    ```typescript
+    // Old service
+    import { Worker as OldWorker } from 'bullmq-v3';
+    
+    const oldWorker = new OldWorker('myqueue', processor, {
+      connection: oldRedisConfig,
+    });
+    
+    // New service
+    import { Worker } from 'bullmq';
+    
+    const newWorker = new Worker('myqueue-v2', processor, {
+      connection: newRedisConfig,
+    });
+    ```
+  </Step>
+  
+  <Step title="Direct new jobs to new queues">
+    Update your producers to add jobs to the new queues:
+    
+    ```typescript
+    // Instead of:
+    await oldQueue.add('job', data);
+    
+    // Use:
+    await newQueue.add('job', data);
+    ```
+  </Step>
+  
+  <Step title="Monitor old queues until drained">
+    ```typescript
+    const checkOldQueues = async () => {
+      const waiting = await oldQueue.getWaitingCount();
+      const active = await oldQueue.getActiveCount();
+      const delayed = await oldQueue.getDelayedCount();
+      
+      console.log('Old queue status:', { waiting, active, delayed });
+      
+      return waiting === 0 && active === 0 && delayed === 0;
+    };
+    
+    // Check periodically
+    const interval = setInterval(async () => {
+      if (await checkOldQueues()) {
+        console.log('Old queues drained - safe to remove old service');
+        clearInterval(interval);
+      }
+    }, 60000);
+    ```
+  </Step>
+  
+  <Step title="Retire old version">
+    When the old queues have no more jobs to process, retire the old version.
+  </Step>
+</Steps>
+
+## Testing Upgrades
+
+<Steps>
+  <Step title="Test in staging first">
+    Always test upgrades in a non-production environment before deploying to production.
+  </Step>
+  
+  <Step title="Create a test suite">
+    ```typescript
+    import { Queue, Worker } from 'bullmq';
+    import { describe, it, expect } from 'vitest';
+    
+    describe('BullMQ Upgrade Tests', () => {
+      it('should process jobs after upgrade', async () => {
+        const queue = new Queue('test-queue');
+        const results: any[] = [];
+        
+        const worker = new Worker(
+          'test-queue',
+          async (job) => {
+            results.push(job.data);
+          }
+        );
+        
+        await queue.add('test', { value: 1 });
+        await queue.add('test', { value: 2 });
+        
+        // Wait for processing
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        expect(results).toHaveLength(2);
+        expect(results[0].value).toBe(1);
+        expect(results[1].value).toBe(2);
+        
+        await worker.close();
+        await queue.close();
+      });
+    });
+    ```
+  </Step>
+  
+  <Step title="Monitor key metrics">
+    Watch these metrics during upgrade:
+    - Job completion rate
+    - Error rate
+    - Queue length
+    - Stalled jobs
+    - Memory usage
+  </Step>
+</Steps>
+
+## Rollback Plan
+
+Always have a rollback plan:
+
+<Steps>
+  <Step title="Take a Redis snapshot">
+    ```bash
+    redis-cli BGSAVE
+    ```
+  </Step>
+  
+  <Step title="Document the current version">
+    ```bash
+    npm list bullmq
+    ```
+  </Step>
+  
+  <Step title="Prepare rollback commands">
+    ```bash
+    # Rollback package version
+    npm install bullmq@3.14.7
+    
+    # Redeploy previous version
+    git revert HEAD
+    # Deploy...
+    ```
+  </Step>
+  
+  <Step title="Test rollback procedure">
+    Test the rollback in staging before production upgrade.
+  </Step>
+</Steps>
+
+## Upgrade Checklist
+
+<AccordionGroup>
+  <Accordion title="Pre-Upgrade">
+    - [ ] Read the [changelog](https://github.com/taskforcesh/bullmq/blob/master/CHANGELOG.md)
+    - [ ] Identify breaking changes
+    - [ ] Test upgrade in staging environment
+    - [ ] Take Redis snapshot
+    - [ ] Document current version
+    - [ ] Prepare rollback plan
+    - [ ] Schedule maintenance window if needed
+  </Accordion>
+  
+  <Accordion title="During Upgrade">
+    - [ ] Update BullMQ package
+    - [ ] Update code for API changes
+    - [ ] Run tests
+    - [ ] Deploy to staging
+    - [ ] Monitor staging metrics
+    - [ ] Deploy to production
+    - [ ] Monitor production metrics closely
+  </Accordion>
+  
+  <Accordion title="Post-Upgrade">
+    - [ ] Verify job processing is normal
+    - [ ] Check error rates
+    - [ ] Monitor queue lengths
+    - [ ] Review logs for warnings
+    - [ ] Document any issues
+    - [ ] Update documentation
+  </Accordion>
+</AccordionGroup>
+
+## Related Resources
+
+<CardGroup cols={2}>
+  <Card title="Bull to BullMQ" icon="arrow-right" href="/migrations/bull-to-bullmq">
+    Migrating from Bull to BullMQ
+  </Card>
+  <Card title="Migration Overview" icon="book" href="/migrations/overview">
+    General migration guidance
+  </Card>
+  <Card title="Going to Production" icon="rocket" href="/operations/going-to-production">
+    Production deployment best practices
+  </Card>
+  <Card title="Troubleshooting" icon="wrench" href="/operations/troubleshooting">
+    Common issues and solutions
+  </Card>
+</CardGroup>
+
+## External Resources
+
+<Card title="BullMQ Changelog" icon="list" href="https://github.com/taskforcesh/bullmq/blob/master/CHANGELOG.md">
+  Official changelog with all version changes
+</Card>

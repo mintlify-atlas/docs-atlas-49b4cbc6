@@ -1,0 +1,373 @@
+---
+title: 'Removing Jobs'
+description: 'Methods for removing jobs and cleaning up queue data in BullMQ'
+---
+
+BullMQ provides several methods for removing jobs from queues, from removing individual jobs to bulk cleanup operations.
+
+## Remove Individual Job
+
+Remove a specific job by its ID, along with all its dependencies:
+
+### Method Signature
+
+```typescript
+async remove(
+  jobId: string, 
+  opts?: { removeChildren?: boolean }
+): Promise<number>
+```
+
+<ParamField path="jobId" type="string" required>
+  The ID of the job to remove
+</ParamField>
+
+<ParamField path="opts.removeChildren" type="boolean" default="true">
+  If true, also removes child jobs in flows. Set to false to keep child jobs.
+</ParamField>
+
+**Returns**: `1` if the job was removed successfully, `0` if the job or any of its dependencies were locked.
+
+### Example
+
+<CodeGroup>
+```typescript TypeScript
+import { Queue } from 'bullmq';
+
+const queue = new Queue('tasks');
+
+// Remove a job
+const removed = await queue.remove('job-id-123');
+
+if (removed === 1) {
+  console.log('Job removed successfully');
+} else {
+  console.log('Job could not be removed (may be locked)');
+}
+
+// Remove without removing children
+await queue.remove('parent-job-id', { removeChildren: false });
+```
+
+```javascript JavaScript
+const { Queue } = require('bullmq');
+
+const queue = new Queue('tasks');
+
+// Remove a job
+const removed = await queue.remove('job-id-123');
+
+if (removed === 1) {
+  console.log('Job removed successfully');
+} else {
+  console.log('Job could not be removed (may be locked)');
+}
+```
+</CodeGroup>
+
+<Info>
+  When a job is removed, a `removed` event is emitted by the queue.
+</Info>
+
+## Drain
+
+Removes all jobs that are waiting or delayed, but **not** active, waiting-children, completed, or failed jobs.
+
+### Method Signature
+
+```typescript
+async drain(delayed?: boolean): Promise<void>
+```
+
+<ParamField path="delayed" type="boolean" default="false">
+  If true, also removes delayed jobs
+</ParamField>
+
+### Examples
+
+<CodeGroup>
+```typescript TypeScript
+import { Queue } from 'bullmq';
+
+const queue = new Queue('tasks');
+
+// Drain waiting jobs only
+await queue.drain();
+
+// Drain both waiting and delayed jobs
+await queue.drain(true);
+```
+
+```javascript JavaScript
+const { Queue } = require('bullmq');
+
+const queue = new Queue('tasks');
+
+// Drain waiting jobs only
+await queue.drain();
+
+// Drain both waiting and delayed jobs
+await queue.drain(true);
+```
+</CodeGroup>
+
+### Parent Job Behavior
+
+<Warning>
+  - Parent jobs in the queue being drained will be kept in **waiting-children** status if they have pending children. If they have no pending children, they will be removed.
+  - Parent jobs in **other queues** will stay in **waiting-children** if they have pending children elsewhere, or be moved to **wait** if all their children are gone.
+</Warning>
+
+## Clean
+
+Removes jobs in a specific state, keeping only jobs within a grace period. Similar to drain but more targeted.
+
+### Method Signature
+
+```typescript
+async clean(
+  grace: number,
+  limit: number,
+  type?: 'completed' | 'wait' | 'waiting' | 'active' | 'paused' | 'prioritized' | 'delayed' | 'failed'
+): Promise<string[]>
+```
+
+<ParamField path="grace" type="number" required>
+  Grace period in milliseconds. Jobs older than this will be removed.
+</ParamField>
+
+<ParamField path="limit" type="number" required>
+  Maximum number of jobs to clean
+</ParamField>
+
+<ParamField path="type" type="string" default="completed">
+  The type of jobs to clean. Can be: `completed`, `wait`, `waiting`, `active`, `paused`, `prioritized`, `delayed`, or `failed`.
+</ParamField>
+
+**Returns**: Array of deleted job IDs
+
+### Examples
+
+<CodeGroup>
+```typescript TypeScript
+import { Queue } from 'bullmq';
+
+const queue = new Queue('tasks');
+
+// Clean completed jobs older than 1 minute
+const deletedIds = await queue.clean(
+  60000,  // 1 minute grace period
+  1000,   // max 1000 jobs to clean
+  'completed'
+);
+
+console.log(`Cleaned ${deletedIds.length} completed jobs`);
+
+// Clean failed jobs older than 1 hour
+await queue.clean(
+  3600000,  // 1 hour
+  5000,     // max 5000 jobs
+  'failed'
+);
+
+// Clean paused jobs older than 5 minutes
+await queue.clean(
+  300000,   // 5 minutes
+  100,
+  'paused'
+);
+```
+
+```javascript JavaScript
+const { Queue } = require('bullmq');
+
+const queue = new Queue('tasks');
+
+// Clean completed jobs older than 1 minute
+const deletedIds = await queue.clean(
+  60000,  // 1 minute grace period
+  1000,   // max 1000 jobs to clean
+  'completed'
+);
+
+console.log(`Cleaned ${deletedIds.length} completed jobs`);
+```
+</CodeGroup>
+
+<Info>
+  The `clean` method triggers a `cleaned` event with the deleted job IDs and the job type.
+</Info>
+
+## Obliterate
+
+Completely destroys a queue and **all** of its contents irreversibly. Use with extreme caution.
+
+### Method Signature
+
+```typescript
+async obliterate(opts?: ObliterateOpts): Promise<void>
+```
+
+<ParamField path="opts.force" type="boolean" default="false">
+  Use `force: true` to obliterate even with active jobs in the queue
+</ParamField>
+
+<ParamField path="opts.count" type="number" default="1000">
+  Maximum number of keys to delete per iteration
+</ParamField>
+
+### Examples
+
+<CodeGroup>
+```typescript TypeScript
+import { Queue } from 'bullmq';
+
+const queue = new Queue('old-queue');
+
+// Normal obliterate (pauses queue first, requires no active jobs)
+await queue.obliterate();
+
+// Force obliterate even with active jobs
+await queue.obliterate({ force: true });
+
+// Obliterate with custom batch size
+await queue.obliterate({ count: 500 });
+```
+
+```javascript JavaScript
+const { Queue } = require('bullmq');
+
+const queue = new Queue('old-queue');
+
+// Normal obliterate (pauses queue first, requires no active jobs)
+await queue.obliterate();
+
+// Force obliterate even with active jobs
+await queue.obliterate({ force: true });
+```
+</CodeGroup>
+
+<Warning>
+  This operation is **irreversible** and will delete all queue data. The queue will be paused first. Parent jobs in other queues will either stay in **waiting-children** if they have pending children elsewhere, or be moved to **wait**.
+</Warning>
+
+<Info>
+  This operation may be slow for very large queues as it must iterate over all jobs.
+</Info>
+
+## Specialized Removal Methods
+
+### Remove Deduplication Key
+
+Removes a deduplication key, allowing duplicate jobs to be added again:
+
+```typescript
+await queue.removeDeduplicationKey('unique-key-123');
+```
+
+### Remove Rate Limit Key
+
+Removes the rate limit key, clearing any active rate limiting:
+
+```typescript
+await queue.removeRateLimitKey();
+```
+
+### Remove Job Scheduler
+
+Removes a job scheduler (repeatable job):
+
+```typescript
+const removed = await queue.removeJobScheduler('scheduler-id');
+```
+
+## Practical Examples
+
+### Example 1: Periodic Cleanup
+
+```typescript
+import { Queue } from 'bullmq';
+
+const queue = new Queue('tasks');
+
+// Run cleanup every hour
+setInterval(async () => {
+  // Clean completed jobs older than 1 day
+  const completed = await queue.clean(
+    86400000,  // 24 hours
+    10000,
+    'completed'
+  );
+  
+  // Clean failed jobs older than 7 days
+  const failed = await queue.clean(
+    604800000,  // 7 days
+    10000,
+    'failed'
+  );
+  
+  console.log(`Cleaned ${completed.length} completed, ${failed.length} failed jobs`);
+}, 3600000); // Every hour
+```
+
+### Example 2: Queue Reset
+
+```typescript
+import { Queue } from 'bullmq';
+
+const queue = new Queue('tasks');
+
+async function resetQueue() {
+  // Drain all waiting jobs
+  await queue.drain(true);
+  
+  // Clean all completed jobs
+  await queue.clean(0, Infinity, 'completed');
+  
+  // Clean all failed jobs
+  await queue.clean(0, Infinity, 'failed');
+  
+  console.log('Queue reset complete');
+}
+
+await resetQueue();
+```
+
+### Example 3: Graceful Queue Deletion
+
+```typescript
+import { Queue, Worker } from 'bullmq';
+
+const queue = new Queue('deprecated-queue');
+const worker = new Worker('deprecated-queue', async job => {
+  // Process job
+});
+
+async function deleteQueue() {
+  // 1. Stop accepting new jobs (pause queue)
+  await queue.pause();
+  
+  // 2. Wait for worker to finish active jobs
+  await worker.close();
+  
+  // 3. Obliterate the queue
+  await queue.obliterate();
+  
+  // 4. Close queue connection
+  await queue.close();
+  
+  console.log('Queue deleted successfully');
+}
+
+await deleteQueue();
+```
+
+## Related
+
+- [Auto Removal](/queues/auto-removal)
+- [Adding Jobs](/queues/adding-jobs)
+- [Queue API Reference](https://api.docs.bullmq.io/classes/v5.Queue.html)
+- [Remove API Reference](https://api.docs.bullmq.io/classes/v5.Queue.html#remove)
+- [Drain API Reference](https://api.docs.bullmq.io/classes/v5.Queue.html#drain)
+- [Clean API Reference](https://api.docs.bullmq.io/classes/v5.Queue.html#clean)
+- [Obliterate API Reference](https://api.docs.bullmq.io/classes/v5.Queue.html#obliterate)

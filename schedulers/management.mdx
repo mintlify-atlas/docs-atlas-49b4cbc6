@@ -1,0 +1,509 @@
+---
+title: 'Managing Job Schedulers'
+description: 'Learn how to manage, retrieve, and remove job schedulers in BullMQ'
+---
+
+Managing the lifecycle and inventory of job schedulers is crucial for maintaining efficient and organized background tasks. BullMQ provides several methods for comprehensive control over your job scheduling environment.
+
+## Key Management Methods
+
+### upsertJobScheduler
+
+Creates or updates a job scheduler. This is the primary method for scheduler management.
+
+```typescript
+import { Queue } from 'bullmq';
+
+const queue = new Queue('myQueue', {
+  connection: { host: 'localhost', port: 6379 },
+});
+
+// Create or update a scheduler
+const job = await queue.upsertJobScheduler(
+  'scheduler-id',
+  {
+    pattern: '0 */6 * * *', // Every 6 hours
+    tz: 'America/New_York',
+  },
+  {
+    name: 'sync-data',
+    data: { source: 'api' },
+    opts: {
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 5000 },
+    },
+  },
+);
+```
+
+<ParamField path="jobSchedulerId" type="string" required>
+  Unique identifier for the scheduler
+</ParamField>
+
+<ParamField path="repeatOpts" type="RepeatOptions" required>
+  Repeat configuration (pattern, every, startDate, etc.)
+</ParamField>
+
+<ParamField path="template" type="JobTemplate">
+  Job template with name, data, and options
+</ParamField>
+
+### removeJobScheduler
+
+Deletes a specific job scheduler from the queue. This is useful when a scheduled task is no longer needed or to clean up inactive or obsolete schedulers.
+
+```typescript
+// Remove a job scheduler with ID 'scheduler-123'
+const result = await queue.removeJobScheduler('scheduler-123');
+
+if (result) {
+  console.log('Scheduler removed successfully');
+} else {
+  console.log('Scheduler not found');
+}
+```
+
+<ParamField path="jobSchedulerId" type="string" required>
+  ID of the scheduler to remove
+</ParamField>
+
+<ResponseField name="result" type="number">
+  Returns 1 if a scheduler was removed, 0 if no scheduler existed with that ID
+</ResponseField>
+
+<Info>
+  Removing a scheduler does not affect jobs that have already been created by that scheduler. Only future job creation is stopped.
+</Info>
+
+### getJobScheduler
+
+Retrieves detailed information about a specific job scheduler.
+
+```typescript
+const scheduler = await queue.getJobScheduler('scheduler-id');
+
+if (scheduler) {
+  console.log('Scheduler details:', scheduler);
+  console.log('Next execution:', new Date(scheduler.next));
+  console.log('Pattern:', scheduler.pattern);
+  console.log('Iteration count:', scheduler.iterationCount);
+} else {
+  console.log('Scheduler not found');
+}
+```
+
+<ParamField path="jobSchedulerId" type="string" required>
+  ID of the scheduler to retrieve
+</ParamField>
+
+<ResponseField name="scheduler" type="JobSchedulerJson">
+  Scheduler details or undefined if not found
+
+  <Expandable title="JobSchedulerJson properties">
+    <ResponseField name="key" type="string">
+      Scheduler ID
+    </ResponseField>
+    
+    <ResponseField name="name" type="string">
+      Job name template
+    </ResponseField>
+    
+    <ResponseField name="next" type="number">
+      Timestamp of next scheduled execution
+    </ResponseField>
+    
+    <ResponseField name="pattern" type="string">
+      Cron pattern (if using cron strategy)
+    </ResponseField>
+    
+    <ResponseField name="every" type="number">
+      Interval in milliseconds (if using every strategy)
+    </ResponseField>
+    
+    <ResponseField name="tz" type="string">
+      Timezone for cron patterns
+    </ResponseField>
+    
+    <ResponseField name="startDate" type="number">
+      Start date timestamp
+    </ResponseField>
+    
+    <ResponseField name="endDate" type="number">
+      End date timestamp
+    </ResponseField>
+    
+    <ResponseField name="limit" type="number">
+      Maximum iteration count
+    </ResponseField>
+    
+    <ResponseField name="iterationCount" type="number">
+      Current iteration count
+    </ResponseField>
+    
+    <ResponseField name="offset" type="number">
+      Offset in milliseconds
+    </ResponseField>
+    
+    <ResponseField name="template" type="JobSchedulerTemplateJson">
+      Job template (data and opts)
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### getJobSchedulers
+
+Retrieves a list of all configured job schedulers within a specified range. This is invaluable for monitoring and managing multiple job schedulers, especially in systems where jobs are dynamically scheduled.
+
+```typescript
+// Retrieve the first 10 job schedulers in ascending order of their next execution time
+const schedulers = await queue.getJobSchedulers(0, 9, true);
+
+schedulers.forEach(scheduler => {
+  console.log(`Scheduler: ${scheduler.key}`);
+  console.log(`Next run: ${new Date(scheduler.next)}`);
+  console.log(`Iterations: ${scheduler.iterationCount}/${scheduler.limit || '∞'}`);
+});
+```
+
+<ParamField path="start" type="number" default="0">
+  Starting index (0-based)
+</ParamField>
+
+<ParamField path="end" type="number" default="-1">
+  Ending index (-1 means all remaining)
+</ParamField>
+
+<ParamField path="asc" type="boolean" default="false">
+  Sort order by next execution time (true = ascending, false = descending)
+</ParamField>
+
+<ResponseField name="schedulers" type="JobSchedulerJson[]">
+  Array of scheduler details
+</ResponseField>
+
+### getSchedulersCount
+
+Returns the total number of active job schedulers.
+
+```typescript
+const count = await queue.getSchedulersCount();
+console.log(`Total active schedulers: ${count}`);
+```
+
+<ResponseField name="count" type="number">
+  Number of active schedulers in the queue
+</ResponseField>
+
+## Common Management Patterns
+
+### Listing All Schedulers
+
+```typescript
+// Get all schedulers
+const allSchedulers = await queue.getJobSchedulers();
+
+console.log(`Found ${allSchedulers.length} schedulers`);
+
+allSchedulers.forEach(scheduler => {
+  const nextRun = new Date(scheduler.next).toLocaleString();
+  console.log(`${scheduler.key}: next run at ${nextRun}`);
+});
+```
+
+### Monitoring Scheduler Status
+
+```typescript
+async function monitorScheduler(schedulerId: string) {
+  const scheduler = await queue.getJobScheduler(schedulerId);
+  
+  if (!scheduler) {
+    console.log(`Scheduler ${schedulerId} not found`);
+    return;
+  }
+  
+  const now = Date.now();
+  const nextRun = new Date(scheduler.next);
+  const timeUntilNext = scheduler.next - now;
+  
+  console.log(`Scheduler: ${scheduler.key}`);
+  console.log(`Job name: ${scheduler.name}`);
+  console.log(`Next execution: ${nextRun.toLocaleString()}`);
+  console.log(`Time until next: ${Math.round(timeUntilNext / 1000)}s`);
+  
+  if (scheduler.pattern) {
+    console.log(`Pattern: ${scheduler.pattern}`);
+    console.log(`Timezone: ${scheduler.tz || 'UTC'}`);
+  } else if (scheduler.every) {
+    console.log(`Interval: ${scheduler.every}ms`);
+  }
+  
+  if (scheduler.limit) {
+    console.log(`Progress: ${scheduler.iterationCount}/${scheduler.limit}`);
+  } else {
+    console.log(`Iterations: ${scheduler.iterationCount}`);
+  }
+  
+  if (scheduler.endDate) {
+    const endDate = new Date(scheduler.endDate);
+    console.log(`Ends: ${endDate.toLocaleString()}`);
+  }
+}
+
+await monitorScheduler('daily-report');
+```
+
+### Updating an Existing Scheduler
+
+```typescript
+// First, get the current scheduler
+const current = await queue.getJobScheduler('my-scheduler');
+
+if (current) {
+  // Update with modified settings
+  await queue.upsertJobScheduler(
+    'my-scheduler',
+    {
+      pattern: '0 */3 * * *', // Changed from every 6 hours to every 3 hours
+      tz: current.tz,
+    },
+    current.template, // Keep existing template
+  );
+  
+  console.log('Scheduler updated successfully');
+}
+```
+
+### Bulk Scheduler Cleanup
+
+```typescript
+async function removeOldSchedulers(prefixPattern: string) {
+  const schedulers = await queue.getJobSchedulers();
+  
+  const toRemove = schedulers.filter(s => 
+    s.key.startsWith(prefixPattern) &&
+    s.endDate && 
+    s.endDate < Date.now()
+  );
+  
+  console.log(`Found ${toRemove.length} expired schedulers to remove`);
+  
+  for (const scheduler of toRemove) {
+    await queue.removeJobScheduler(scheduler.key);
+    console.log(`Removed: ${scheduler.key}`);
+  }
+}
+
+// Remove all expired schedulers with 'temp-' prefix
+await removeOldSchedulers('temp-');
+```
+
+### Pausing and Resuming Schedulers
+
+<Note>
+  BullMQ doesn't have built-in pause/resume for individual schedulers. You can implement this pattern by removing and re-creating schedulers.
+</Note>
+
+```typescript
+// Store scheduler configuration
+const schedulerConfigs = new Map();
+
+async function pauseScheduler(schedulerId: string) {
+  const scheduler = await queue.getJobScheduler(schedulerId);
+  
+  if (scheduler) {
+    // Store configuration
+    schedulerConfigs.set(schedulerId, {
+      pattern: scheduler.pattern,
+      every: scheduler.every,
+      tz: scheduler.tz,
+      template: scheduler.template,
+    });
+    
+    // Remove scheduler
+    await queue.removeJobScheduler(schedulerId);
+    console.log(`Paused scheduler: ${schedulerId}`);
+  }
+}
+
+async function resumeScheduler(schedulerId: string) {
+  const config = schedulerConfigs.get(schedulerId);
+  
+  if (config) {
+    await queue.upsertJobScheduler(
+      schedulerId,
+      {
+        pattern: config.pattern,
+        every: config.every,
+        tz: config.tz,
+      },
+      config.template,
+    );
+    
+    schedulerConfigs.delete(schedulerId);
+    console.log(`Resumed scheduler: ${schedulerId}`);
+  }
+}
+```
+
+### Dashboard Data
+
+```typescript
+async function getSchedulerDashboard() {
+  const schedulers = await queue.getJobSchedulers();
+  const total = await queue.getSchedulersCount();
+  
+  const now = Date.now();
+  const upcomingIn10Min = schedulers.filter(s => 
+    s.next < now + 10 * 60 * 1000
+  ).length;
+  
+  const byStrategy = schedulers.reduce((acc, s) => {
+    const strategy = s.pattern ? 'cron' : 'every';
+    acc[strategy] = (acc[strategy] || 0) + 1;
+    return acc;
+  }, {} as Record<string, number>);
+  
+  return {
+    total,
+    upcomingIn10Min,
+    byStrategy,
+    schedulers: schedulers.slice(0, 10), // First 10
+  };
+}
+
+const dashboard = await getSchedulerDashboard();
+console.log('Scheduler Dashboard:', dashboard);
+```
+
+## Best Practices
+
+<Steps>
+  <Step title="Use consistent naming conventions">
+    Choose meaningful, hierarchical scheduler IDs:
+    ```typescript
+    'reports:daily:sales'
+    'cleanup:temp-files'
+    'sync:user-data:hourly'
+    ```
+  </Step>
+  
+  <Step title="Monitor scheduler health">
+    Regularly check scheduler status and execution times:
+    ```typescript
+    setInterval(async () => {
+      const schedulers = await queue.getJobSchedulers();
+      schedulers.forEach(s => {
+        if (s.next < Date.now()) {
+          console.warn(`Scheduler ${s.key} appears stalled`);
+        }
+      });
+    }, 60000);
+    ```
+  </Step>
+  
+  <Step title="Clean up completed schedulers">
+    Remove schedulers that have reached their limit:
+    ```typescript
+    const schedulers = await queue.getJobSchedulers();
+    for (const s of schedulers) {
+      if (s.limit && s.iterationCount >= s.limit) {
+        await queue.removeJobScheduler(s.key);
+      }
+    }
+    ```
+  </Step>
+  
+  <Step title="Handle scheduler not found gracefully">
+    Always check for undefined when retrieving schedulers:
+    ```typescript
+    const scheduler = await queue.getJobScheduler('id');
+    if (!scheduler) {
+      // Handle missing scheduler
+      console.warn('Scheduler not found, creating new one...');
+      await queue.upsertJobScheduler('id', { ... });
+    }
+    ```
+  </Step>
+  
+  <Step title="Document scheduler purposes">
+    Use job data or external documentation to track scheduler purposes:
+    ```typescript
+    await queue.upsertJobScheduler(
+      'reports-daily',
+      { pattern: '0 9 * * *' },
+      {
+        name: 'daily-report',
+        data: {
+          description: 'Generates daily sales report for management',
+          owner: 'analytics-team',
+        },
+      },
+    );
+    ```
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+### Scheduler Not Creating Jobs
+
+```typescript
+const scheduler = await queue.getJobScheduler('my-scheduler');
+
+if (!scheduler) {
+  console.log('Scheduler does not exist');
+} else if (scheduler.endDate && scheduler.endDate < Date.now()) {
+  console.log('Scheduler has passed its end date');
+} else if (scheduler.limit && scheduler.iterationCount >= scheduler.limit) {
+  console.log('Scheduler has reached its iteration limit');
+} else {
+  console.log('Scheduler appears active');
+  console.log('Next execution:', new Date(scheduler.next));
+}
+```
+
+### Finding Duplicate Schedulers
+
+```typescript
+const schedulers = await queue.getJobSchedulers();
+const byPattern = new Map<string, string[]>();
+
+schedulers.forEach(s => {
+  const key = `${s.pattern || s.every}-${s.tz || 'UTC'}`;
+  if (!byPattern.has(key)) {
+    byPattern.set(key, []);
+  }
+  byPattern.get(key)!.push(s.key);
+});
+
+for (const [pattern, ids] of byPattern) {
+  if (ids.length > 1) {
+    console.warn(`Duplicate schedulers for pattern ${pattern}:`, ids);
+  }
+}
+```
+
+## Related Topics
+
+<CardGroup cols={2}>
+  <Card title="Overview" icon="book" href="/schedulers/overview">
+    Learn Job Schedulers basics
+  </Card>
+  <Card title="Repeat Strategies" icon="clock-rotate-left" href="/schedulers/repeat-strategies">
+    Understand every, cron, and custom strategies
+  </Card>
+  <Card title="Repeat Options" icon="sliders" href="/schedulers/repeat-options">
+    Configure scheduler options
+  </Card>
+  <Card title="RepeatableOptions" icon="code" href="/api/interfaces/repeatable-options">
+    API reference
+  </Card>
+</CardGroup>
+
+## API Reference
+
+- [Queue.upsertJobScheduler](https://api.docs.bullmq.io/classes/v5.Queue.html#upsertjobscheduler)
+- [Queue.removeJobScheduler](https://api.docs.bullmq.io/classes/v5.Queue.html#removejobscheduler)
+- [Queue.getJobScheduler](https://api.docs.bullmq.io/classes/v5.Queue.html#getjobscheduler)
+- [Queue.getJobSchedulers](https://api.docs.bullmq.io/classes/v5.Queue.html#getjobschedulers)
+- [Queue.getSchedulersCount](https://api.docs.bullmq.io/classes/v5.Queue.html#getschedulerscount)

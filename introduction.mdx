@@ -1,0 +1,99 @@
+---
+title: What is BullMQ
+description: Learn about BullMQ, a fast and robust Redis-based distributed queue system for Node.js
+---
+
+BullMQ is a [Node.js](https://nodejs.org) library that implements a fast and robust queue system built on top of [Redis](https://redis.io). It helps resolve many modern microservices architecture challenges by providing a reliable message queue system.
+
+## Overview
+
+The fastest, most reliable, Redis-based distributed queue for Node. Carefully written for rock solid stability and atomicity.
+
+BullMQ is designed to fulfill the following goals:
+
+- **Exactly once semantics** - Attempts to deliver every message exactly one time, but will deliver at least once in the worst case scenario
+- **Horizontal scalability** - Easy to scale by adding more workers for processing jobs in parallel
+- **Consistency** - Reliable and consistent job processing
+- **High performance** - Achieves the highest possible throughput from Redis by combining efficient Lua scripts and pipelining
+
+<Note>
+View the repository, see open issues, and contribute back on [GitHub](https://github.com/taskforcesh/bullmq)!
+</Note>
+
+## Core Concepts
+
+BullMQ is based on 4 main classes that together can be used to resolve many different problems:
+
+<CardGroup cols={2}>
+  <Card title="Queue" icon="list">
+    Used for adding jobs to the queue and basic queue manipulation such as pausing, cleaning, or getting data from the queue.
+  </Card>
+  <Card title="Worker" icon="gear">
+    Instances capable of processing jobs. You can have many workers running in the same process, separate processes, or different machines.
+  </Card>
+  <Card title="QueueEvents" icon="bolt">
+    Used to listen to global events like job completions, failures, and progress updates.
+  </Card>
+  <Card title="FlowProducer" icon="diagram-project">
+    Used for creating jobs with parent-child dependencies and complex job workflows.
+  </Card>
+</CardGroup>
+
+## Key Features
+
+BullMQ provides a comprehensive set of features for queue management:
+
+- **Minimal CPU usage** - Polling-free design for optimal performance
+- **Distributed execution** - Job execution based on Redis for distributed systems
+- **Job ordering** - Support for LIFO and FIFO job processing
+- **Priorities** - Prioritize important jobs over others
+- **Delayed jobs** - Schedule jobs to be processed at a future time
+- **Repeatable jobs** - Schedule jobs according to cron specifications
+- **Automatic retries** - Failed jobs can be automatically retried
+- **Concurrency control** - Set concurrency per worker
+- **Sandboxed processing** - Threaded (sandboxed) processing functions for isolation
+- **Automatic recovery** - Recover from process crashes
+- **Parent-Child dependencies** - Create complex job workflows with dependencies
+- **Rate limiting** - Control the rate of job processing
+- **Job events** - Listen to various job lifecycle events
+
+## Why Use Message Queues?
+
+If you're new to message queues, you may wonder why they are needed. Queues can solve many different problems elegantly:
+
+- **Smoothing processing peaks** - Handle traffic spikes without overwhelming your system
+- **Microservices communication** - Create robust communication channels between services
+- **Offloading heavy work** - Distribute heavy workloads from one server to many workers
+- **Background processing** - Handle time-consuming tasks asynchronously
+- **Job scheduling** - Schedule tasks to run at specific times or intervals
+- **Reliability** - Ensure jobs are processed even if services temporarily go down
+
+## Used By
+
+BullMQ is trusted by many organizations, including:
+
+- Microsoft (Lage build system)
+- Vendure (E-commerce framework)
+- Datawrapper (Data visualization tool)
+- NestJS (Progressive Node.js framework)
+- Langfuse (LLM engineering platform)
+- Novu (Notification infrastructure)
+- NocoDB (Open source Airtable alternative)
+- Infisical (Secret management platform)
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/installation">
+    Get started by installing BullMQ in your project
+  </Card>
+  <Card title="Quick Start" icon="rocket" href="/quick-start">
+    Create your first queue and worker in minutes
+  </Card>
+  <Card title="Architecture" icon="sitemap" href="/architecture">
+    Understand how BullMQ works under the hood
+  </Card>
+  <Card title="API Reference" icon="code" href="https://api.docs.bullmq.io">
+    Explore the complete API documentation
+  </Card>
+</CardGroup>

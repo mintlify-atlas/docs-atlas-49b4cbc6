@@ -1,0 +1,503 @@
+---
+title: 'Auto-removal of Jobs'
+description: 'Automatically remove completed and failed jobs to manage Redis memory usage'
+---
+
+By default, BullMQ keeps completed and failed jobs in Redis indefinitely. Auto-removal strategies help manage Redis memory by automatically cleaning up finalized jobs.
+
+## Why Auto-removal?
+
+Without auto-removal:
+
+- **Memory bloat**: Completed/failed jobs accumulate in Redis
+- **Performance degradation**: Large sets slow down Redis operations
+- **Cost increase**: More Redis memory required
+
+With auto-removal:
+
+- **Controlled memory usage**: Keep only recent or important jobs
+- **Better performance**: Smaller Redis sets
+- **Cost efficiency**: Optimal Redis sizing
+
+## Configuration Options
+
+Configure auto-removal on the `Worker` options:
+
+```typescript
+import { Worker } from 'bullmq';
+
+const worker = new Worker(
+  'queueName',
+  async (job) => {
+    return await processJob(job);
+  },
+  {
+    connection: {
+      host: 'localhost',
+      port: 6379,
+    },
+    removeOnComplete: { count: 1000 },
+    removeOnFail: { count: 5000 },
+  },
+);
+```
+
+### removeOnComplete
+
+Control how completed jobs are removed:
+
+```typescript
+import { WorkerOptions } from 'bullmq';
+
+const options: WorkerOptions = {
+  removeOnComplete: {
+    count: 1000, // Keep last 1000 completed jobs
+  },
+};
+```
+
+### removeOnFail
+
+Control how failed jobs are removed:
+
+```typescript
+const options: WorkerOptions = {
+  removeOnFail: {
+    count: 5000, // Keep last 5000 failed jobs
+  },
+};
+```
+
+<Info>
+  A common practice is to keep fewer completed jobs and more failed jobs for debugging purposes.
+</Info>
+
+## Removal Strategies
+
+### Remove All Jobs
+
+Remove jobs immediately after completion:
+
+```typescript
+const worker = new Worker(
+  'queueName',
+  processorFunction,
+  {
+    connection,
+    removeOnComplete: { count: 0 }, // Remove all completed jobs
+    removeOnFail: { count: 0 },     // Remove all failed jobs
+  },
+);
+```
+
+<Warning>
+  Jobs are removed regardless of their names. All completed/failed jobs will be deleted.
+</Warning>
+
+**Use case**: High-volume queues where job results aren't needed after processing.
+
+### Keep a Fixed Number of Jobs
+
+Keep the most recent N jobs:
+
+```typescript
+const worker = new Worker(
+  'queueName',
+  processorFunction,
+  {
+    connection,
+    removeOnComplete: { count: 1000 },
+    removeOnFail: { count: 5000 },
+  },
+);
+```
+
+**How it works:**
+
+- When job #1001 completes, job #1 is removed
+- Keeps a rolling window of recent jobs
+- Maintains a fixed memory footprint
+
+### Keep Jobs by Age
+
+Keep jobs up to a certain age (in seconds):
+
+```typescript
+const worker = new Worker(
+  'queueName',
+  processorFunction,
+  {
+    connection,
+    removeOnComplete: {
+      age: 3600, // Keep jobs up to 1 hour old
+    },
+    removeOnFail: {
+      age: 24 * 3600, // Keep jobs up to 24 hours old
+    },
+  },
+);
+```
+
+**Time units:**
+
+- `3600` = 1 hour
+- `24 * 3600` = 24 hours
+- `7 * 24 * 3600` = 7 days
+
+### Combine Age and Count
+
+Use both strategies for more control:
+
+```typescript
+const worker = new Worker(
+  'queueName',
+  processorFunction,
+  {
+    connection,
+    removeOnComplete: {
+      age: 3600,      // Keep up to 1 hour old
+      count: 1000,    // But no more than 1000 jobs
+    },
+    removeOnFail: {
+      age: 24 * 3600, // Keep up to 24 hours old
+      count: 5000,    // But no more than 5000 jobs
+    },
+  },
+);
+```
+
+**Behavior**: Keeps jobs that satisfy BOTH conditions.
+
+### Control Cleanup Performance
+
+Limit the number of jobs removed per cleanup iteration:
+
+```typescript
+const worker = new Worker(
+  'queueName',
+  processorFunction,
+  {
+    connection,
+    removeOnComplete: {
+      age: 3600,
+      count: 1000,
+      limit: 100, // Remove max 100 jobs per cleanup
+    },
+    removeOnFail: {
+      age: 24 * 3600,
+      limit: 50, // Remove max 50 jobs per cleanup
+    },
+  },
+);
+```
+
+**Use case**: Prevent cleanup operations from blocking Redis for too long.
+
+## KeepJobs Type Reference
+
+The `KeepJobs` type supports two formats:
+
+```typescript
+type KeepJobs =
+  | {
+      /**
+       * Maximum count of jobs to be kept.
+       */
+      count: number;
+    }
+  | {
+      /**
+       * Maximum age in seconds for job to be kept.
+       */
+      age: number;
+
+      /**
+       * Maximum count of jobs to be kept.
+       */
+      count?: number;
+
+      /**
+       * Maximum quantity of jobs to be removed per cleanup iteration.
+       */
+      limit?: number;
+    };
+```
+
+## Auto-removal Behavior
+
+### Lazy Cleanup
+
+<Info>
+  Auto-removal works **lazily**. Jobs are only removed when a new job completes or fails, triggering the cleanup process.
+</Info>
+
+```typescript
+// Cleanup happens here ⬇
+worker.on('completed', (job) => {
+  // After this job completes, old jobs are removed
+});
+
+// And here ⬇
+worker.on('failed', (job) => {
+  // After this job fails, old jobs are removed
+});
+```
+
+**Implications:**
+
+- If no jobs are processing, no cleanup happens
+- Cleanup is distributed across job completions
+- No dedicated cleanup background process
+
+### Per-job Cleanup
+
+Each job completion/failure triggers a cleanup:
+
+```typescript
+const worker = new Worker('queue', processor, {
+  removeOnComplete: { count: 100, limit: 10 },
+});
+
+// Job 101 completes
+// ➡ Cleanup runs: removes up to 10 old jobs
+// Job 102 completes
+// ➡ Cleanup runs again: removes up to 10 more old jobs
+```
+
+## Production Examples
+
+### High-Volume Queue
+
+Keep minimal history:
+
+```typescript
+const worker = new Worker(
+  'highVolumeQueue',
+  processorFunction,
+  {
+    connection,
+    removeOnComplete: {
+      count: 100,  // Keep only last 100 completed
+      limit: 50,   // Remove 50 at a time
+    },
+    removeOnFail: {
+      count: 500,  // Keep more failures for debugging
+      limit: 25,
+    },
+  },
+);
+```
+
+### Audit Trail Queue
+
+Keep jobs longer for compliance:
+
+```typescript
+const worker = new Worker(
+  'auditQueue',
+  processorFunction,
+  {
+    connection,
+    removeOnComplete: {
+      age: 30 * 24 * 3600, // 30 days
+      count: 50000,        // Up to 50k jobs
+      limit: 100,
+    },
+    removeOnFail: {
+      age: 90 * 24 * 3600, // 90 days for failures
+      count: 10000,
+      limit: 50,
+    },
+  },
+);
+```
+
+### Development Queue
+
+Keep everything for debugging:
+
+```typescript
+const worker = new Worker(
+  'devQueue',
+  processorFunction,
+  {
+    connection,
+    // Don't set removeOnComplete/removeOnFail
+    // Jobs are kept indefinitely
+  },
+);
+```
+
+### Critical Queue
+
+Balance debugging and memory:
+
+```typescript
+const worker = new Worker(
+  'criticalQueue',
+  processorFunction,
+  {
+    connection,
+    removeOnComplete: {
+      age: 7 * 24 * 3600, // 7 days
+      count: 10000,
+      limit: 100,
+    },
+    removeOnFail: {
+      // Keep ALL failed jobs (no removal)
+      // Manual cleanup required
+    },
+  },
+);
+```
+
+## Monitoring Auto-removal
+
+Track job counts to verify cleanup:
+
+```typescript
+import { Queue } from 'bullmq';
+
+const queue = new Queue('queueName');
+
+setInterval(async () => {
+  const completedCount = await queue.getCompletedCount();
+  const failedCount = await queue.getFailedCount();
+  
+  console.log(`Completed: ${completedCount}, Failed: ${failedCount}`);
+  
+  // Alert if counts exceed thresholds
+  if (completedCount > 2000 || failedCount > 10000) {
+    console.warn('Job counts exceed expected limits!');
+  }
+}, 60000); // Check every minute
+```
+
+## Manual Cleanup
+
+For one-time or scheduled cleanup:
+
+```typescript
+import { Queue } from 'bullmq';
+
+const queue = new Queue('queueName');
+
+// Remove completed jobs older than 1 hour
+await queue.clean(3600 * 1000, 100, 'completed');
+
+// Remove failed jobs older than 24 hours
+await queue.clean(24 * 3600 * 1000, 100, 'failed');
+
+// Remove all completed jobs
+await queue.clean(0, 0, 'completed');
+```
+
+## Best Practices
+
+<Steps>
+  <Step title="Keep fewer completed jobs">
+    Completed jobs are usually less interesting than failures:
+    ```typescript
+    removeOnComplete: { count: 1000 },
+    removeOnFail: { count: 5000 },
+    ```
+  </Step>
+  
+  <Step title="Use age-based removal for compliance">
+    When regulatory requirements dictate retention periods:
+    ```typescript
+    removeOnComplete: { age: 30 * 24 * 3600 }, // 30 days
+    ```
+  </Step>
+  
+  <Step title="Set cleanup limits for high-volume queues">
+    Prevent cleanup from blocking Redis:
+    ```typescript
+    removeOnComplete: { count: 100, limit: 50 },
+    ```
+  </Step>
+  
+  <Step title="Monitor job counts">
+    Alert when counts exceed expected thresholds.
+  </Step>
+  
+  <Step title="Test in staging first">
+    Verify removal settings don't delete needed jobs.
+  </Step>
+  
+  <Step title="Consider external archiving">
+    For long-term storage, export jobs before removal:
+    ```typescript
+    worker.on('completed', async (job, result) => {
+      await archiveToDatabase(job, result);
+    });
+    ```
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+### Jobs Not Being Removed
+
+**Cause**: No jobs completing/failing to trigger cleanup.
+
+**Solution**: Ensure workers are actively processing:
+
+```typescript
+// Check if worker is running
+if (!worker.isRunning()) {
+  console.log('Worker is not running - no cleanup will occur');
+}
+```
+
+### Too Many Jobs Accumulating
+
+**Cause**: Cleanup settings too lenient or no cleanup configured.
+
+**Solution**: Adjust removal settings:
+
+```typescript
+// Before: Too lenient
+removeOnComplete: { count: 100000 },
+
+// After: More aggressive
+removeOnComplete: { count: 1000, limit: 100 },
+```
+
+### Redis Memory Still Growing
+
+**Cause**: Jobs accumulating in other states (delayed, waiting, active).
+
+**Solution**: Monitor and clean other job states:
+
+```typescript
+const counts = await queue.getJobCounts('waiting', 'delayed', 'active');
+console.log('Other job states:', counts);
+
+// Clean stuck jobs if needed
+await queue.clean(3600 * 1000, 100, 'active'); // Stalled jobs
+```
+
+## Related Topics
+
+<CardGroup cols={2}>
+  <Card title="Worker Options" icon="gear" href="/workers/overview">
+    Configure worker behavior
+  </Card>
+  <Card title="Queue Management" icon="list" href="https://docs.bullmq.io/guide/queues/">
+    Manage jobs in queues
+  </Card>
+  <Card title="Job Lifecycle" icon="rotate" href="https://docs.bullmq.io/guide/jobs/">
+    Understand job states
+  </Card>
+  <Card title="Redis Optimization" icon="database" href="https://docs.bullmq.io/guide/connections">
+    Optimize Redis usage
+  </Card>
+</CardGroup>
+
+## API Reference
+
+- [WorkerOptions.removeOnComplete](https://api.docs.bullmq.io/interfaces/v5.WorkerOptions.html#removeOnComplete)
+- [WorkerOptions.removeOnFail](https://api.docs.bullmq.io/interfaces/v5.WorkerOptions.html#removeOnFail)
+- [KeepJobs Type](https://api.docs.bullmq.io/types/v5.KeepJobs.html)
+- [Queue.clean()](https://api.docs.bullmq.io/classes/v5.Queue.html#clean)

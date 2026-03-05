@@ -1,0 +1,384 @@
+---
+title: 'Stalled Jobs'
+description: 'Understand how BullMQ detects and recovers stalled jobs'
+---
+
+A stalled job is a job that was being processed by a worker but didn't complete within the expected time frame. BullMQ automatically detects and recovers stalled jobs, moving them back to the `waiting` state for reprocessing.
+
+## What Causes Stalled Jobs?
+
+Jobs become stalled when:
+
+1. **CPU-intensive operations block the event loop**: The worker can't renew the job's lock
+2. **Worker crashes**: The process terminates unexpectedly
+3. **Network issues**: Worker loses connection to Redis
+4. **Long-running jobs**: Processing exceeds the `lockDuration`
+5. **High system load**: Worker can't respond in time
+
+## How Stalled Detection Works
+
+BullMQ uses a lock-based mechanism:
+
+<Steps>
+  <Step title="Worker acquires lock">
+    When a worker starts processing a job, it acquires a lock with a TTL (time-to-live).
+  </Step>
+  
+  <Step title="Lock renewal">
+    The worker automatically renews the lock periodically while processing.
+  </Step>
+  
+  <Step title="Stalled detection">
+    If the lock expires (not renewed in time), the job is marked as stalled.
+  </Step>
+  
+  <Step title="Recovery">
+    The stalled checker moves the job back to `waiting` for another worker to process.
+  </Step>
+</Steps>
+
+```typescript
+import { Worker } from 'bullmq';
+
+const worker = new Worker('queueName', processorFunction, {
+  // Lock duration: How long before a job is considered stalled
+  lockDuration: 30000, // 30 seconds (default)
+  
+  // Stalled check interval: How often to check for stalled jobs
+  stalledInterval: 30000, // 30 seconds (default)
+  
+  // Lock renewal frequency (auto-calculated as lockDuration / 2)
+  lockRenewTime: 15000, // 15 seconds
+});
+```
+
+## Stalled Job Configuration
+
+### lockDuration
+
+The maximum time a job can be locked before being considered stalled:
+
+```typescript
+const worker = new Worker('queueName', processorFunction, {
+  lockDuration: 60000, // 60 seconds
+});
+```
+
+<Warning>
+  Set `lockDuration` longer than your longest expected job duration. If jobs regularly take 45 seconds, use at least 60 seconds.
+</Warning>
+
+### stalledInterval
+
+How often the worker checks for stalled jobs:
+
+```typescript
+const worker = new Worker('queueName', processorFunction, {
+  stalledInterval: 10000, // Check every 10 seconds
+});
+```
+
+<Info>
+  Lower `stalledInterval` means faster recovery but slightly higher Redis load.
+</Info>
+
+### maxStalledCount
+
+Maximum times a job can be recovered from stalled state before moving to `failed`:
+
+```typescript
+const worker = new Worker('queueName', processorFunction, {
+  maxStalledCount: 2, // Allow 2 stalled recoveries
+});
+```
+
+After exceeding `maxStalledCount`, the job moves to the `failed` state.
+
+### skipStalledCheck
+
+Disable stalled checking for a specific worker:
+
+```typescript
+const worker = new Worker('queueName', processorFunction, {
+  skipStalledCheck: true, // This worker won't check for stalled jobs
+});
+```
+
+<Note>
+  Even if one worker skips stalled checks, other workers on the same queue can still detect and recover stalled jobs.
+</Note>
+
+### skipLockRenewal
+
+Disable automatic lock renewal:
+
+```typescript
+const worker = new Worker('queueName', processorFunction, {
+  skipLockRenewal: true, // Don't renew locks automatically
+});
+```
+
+<Warning>
+  Only use `skipLockRenewal` if you have a custom lock management strategy. Without renewal, jobs will become stalled after `lockDuration`.
+</Warning>
+
+## Preventing Stalled Jobs
+
+### 1. Keep Processors Async
+
+Avoid blocking the event loop:
+
+```typescript
+// ❌ Bad: Blocks the event loop
+const badWorker = new Worker('queue', async (job) => {
+  // CPU-intensive synchronous operation
+  let result = 0;
+  for (let i = 0; i < 10000000000; i++) {
+    result += Math.sqrt(i);
+  }
+  return result;
+});
+
+// ✅ Good: Async I/O operations
+const goodWorker = new Worker('queue', async (job) => {
+  const data = await fetch(job.data.url);
+  await database.save(data);
+  return data;
+});
+```
+
+### 2. Use Sandboxed Processors for CPU Work
+
+Isolate CPU-intensive operations:
+
+```typescript
+import { Worker } from 'bullmq';
+import path from 'path';
+
+// Run CPU-intensive work in separate process
+const worker = new Worker(
+  'cpuQueue',
+  path.join(__dirname, 'cpu-processor.js'),
+  {
+    useWorkerThreads: true,
+    concurrency: 4,
+  },
+);
+```
+
+See [Sandboxed Processors](/workers/sandboxed-processors) for details.
+
+### 3. Set Appropriate Lock Duration
+
+Match `lockDuration` to job processing time:
+
+```typescript
+// Jobs take ~20 seconds on average
+const worker = new Worker('queue', processorFunction, {
+  lockDuration: 30000, // 20s + 10s buffer = 30s
+});
+
+// Jobs take ~5 minutes on average
+const longWorker = new Worker('longQueue', longProcessor, {
+  lockDuration: 360000, // 6 minutes
+});
+```
+
+### 4. Monitor and Adjust Concurrency
+
+High concurrency with CPU work causes stalls:
+
+```typescript
+import os from 'os';
+
+// For I/O work: High concurrency is fine
+const ioWorker = new Worker('ioQueue', ioProcessor, {
+  concurrency: 50,
+});
+
+// For CPU work: Match CPU cores
+const cpuWorker = new Worker('cpuQueue', './cpu-processor.js', {
+  concurrency: os.cpus().length,
+});
+```
+
+## Monitoring Stalled Jobs
+
+Listen for stalled events:
+
+```typescript
+import { Worker } from 'bullmq';
+
+const worker = new Worker('queueName', processorFunction, {
+  lockDuration: 30000,
+  maxStalledCount: 2,
+});
+
+// Job was moved back to waiting due to stall
+worker.on('stalled', (jobId: string, prev: string) => {
+  console.log(`Job ${jobId} stalled and moved from ${prev} back to waiting`);
+  
+  // Alert or log for monitoring
+  alerting.notify(`Job ${jobId} stalled`);
+});
+
+// Track lock renewal
+worker.on('locksRenewed', ({ count, jobIds }) => {
+  console.log(`Renewed locks for ${count} jobs:`, jobIds);
+});
+
+// Lock renewal failed
+worker.on('lockRenewalFailed', (jobIds: string[]) => {
+  console.error('Lock renewal failed for jobs:', jobIds);
+  
+  // Optionally cancel these jobs
+  jobIds.forEach(id => worker.cancelJob(id));
+});
+```
+
+## Stalled Job Recovery Process
+
+When a job becomes stalled:
+
+1. **Detection**: Worker's stalled checker identifies the expired lock
+2. **Event emission**: `stalled` event is emitted with the job ID
+3. **Move to waiting**: Job is moved back to the `waiting` state
+4. **Increment counter**: Job's stalled count is incremented
+5. **Re-processing**: Another worker (or the same one) picks up the job
+6. **Failure on limit**: If `maxStalledCount` is exceeded, job moves to `failed`
+
+```typescript
+import { Worker, Queue } from 'bullmq';
+
+const worker = new Worker('queue', processorFunction, {
+  maxStalledCount: 2,
+});
+
+worker.on('stalled', async (jobId) => {
+  console.log(`Job ${jobId} stalled`);
+  
+  // Check the job's stall count
+  const queue = new Queue('queue');
+  const job = await queue.getJob(jobId);
+  
+  if (job) {
+    console.log(`Job has stalled ${job.attemptsMade} times`);
+  }
+});
+
+worker.on('failed', async (job, error) => {
+  if (error.message.includes('job stalled more than allowable limit')) {
+    console.error(`Job ${job?.id} failed due to excessive stalls`);
+  }
+});
+```
+
+## Troubleshooting Stalled Jobs
+
+### Frequent Stalling
+
+**Symptoms**: Jobs stall repeatedly.
+
+**Causes & Solutions**:
+
+1. **CPU blocking**:
+   ```typescript
+   // Solution: Use sandboxed processors
+   const worker = new Worker('queue', './processor.js');
+   ```
+
+2. **Lock duration too short**:
+   ```typescript
+   // Solution: Increase lockDuration
+   const worker = new Worker('queue', processor, {
+     lockDuration: 60000, // Increase from 30s to 60s
+   });
+   ```
+
+3. **High concurrency**:
+   ```typescript
+   // Solution: Reduce concurrency
+   const worker = new Worker('queue', processor, {
+     concurrency: 5, // Reduce from 50 to 5
+   });
+   ```
+
+### Jobs Fail After Multiple Stalls
+
+**Cause**: Exceeding `maxStalledCount`.
+
+**Solution**: Increase `maxStalledCount` or fix the root cause:
+
+```typescript
+const worker = new Worker('queue', processor, {
+  maxStalledCount: 3, // Increase from 1 to 3
+});
+```
+
+### No Stalled Detection
+
+**Cause**: All workers have `skipStalledCheck: true`.
+
+**Solution**: Ensure at least one worker performs stalled checks:
+
+```typescript
+// At least one worker should NOT skip stalled checks
+const checkerWorker = new Worker('queue', processor, {
+  skipStalledCheck: false, // Default
+});
+```
+
+## Best Practices
+
+<Steps>
+  <Step title="Set lockDuration appropriately">
+    Make it 1.5-2x your longest expected job duration.
+  </Step>
+  
+  <Step title="Use sandboxing for CPU work">
+    Prevent event loop blocking with sandboxed processors.
+  </Step>
+  
+  <Step title="Monitor stalled events">
+    Alert on frequent stalls to identify problematic jobs:
+    ```typescript
+    worker.on('stalled', (jobId) => {
+      metrics.increment('jobs.stalled');
+    });
+    ```
+  </Step>
+  
+  <Step title="Adjust maxStalledCount">
+    Set based on acceptable retry attempts for your use case.
+  </Step>
+  
+  <Step title="Keep workers healthy">
+    Ensure workers have sufficient resources (CPU, memory, network).
+  </Step>
+  
+  <Step title="Test under load">
+    Simulate high load to identify stalling issues before production.
+  </Step>
+</Steps>
+
+## Related Topics
+
+<CardGroup cols={2}>
+  <Card title="Sandboxed Processors" icon="box" href="/workers/sandboxed-processors">
+    Prevent stalls with process isolation
+  </Card>
+  <Card title="Concurrency" icon="layer-group" href="/workers/concurrency">
+    Configure parallel processing
+  </Card>
+  <Card title="Graceful Shutdown" icon="power-off" href="/workers/graceful-shutdown">
+    Minimize stalls during shutdown
+  </Card>
+  <Card title="Cancelling Jobs" icon="ban" href="/workers/cancelling-jobs">
+    Handle lock renewal failures
+  </Card>
+</CardGroup>
+
+## API Reference
+
+- [Worker API Reference](https://api.docs.bullmq.io/classes/v5.Worker.html)
+- [WorkerOptions API Reference](https://api.docs.bullmq.io/interfaces/v5.WorkerOptions.html)

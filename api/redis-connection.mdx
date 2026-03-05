@@ -1,0 +1,286 @@
+---
+title: 'RedisConnection'
+description: 'Manages Redis connections for BullMQ'
+---
+
+## Overview
+
+The RedisConnection class manages the connection to Redis for BullMQ. It handles connection lifecycle, version checking, and script loading.
+
+<Note>
+  You typically don't need to use this class directly. BullMQ classes like Queue and Worker handle connections automatically.
+</Note>
+
+## Constructor
+
+```typescript
+new RedisConnection(
+  opts: ConnectionOptions,
+  extraOptions?: {
+    shared?: boolean;
+    blocking?: boolean;
+    skipVersionCheck?: boolean;
+    skipWaitingForReady?: boolean;
+  }
+)
+```
+
+<ParamField path="opts" type="ConnectionOptions" required>
+  Redis connection options (ioredis configuration or Redis instance)
+</ParamField>
+
+<ParamField path="extraOptions.shared" type="boolean" default="false">
+  Whether this connection is shared
+</ParamField>
+
+<ParamField path="extraOptions.blocking" type="boolean" default="true">
+  Whether this connection supports blocking operations
+</ParamField>
+
+<ParamField path="extraOptions.skipVersionCheck" type="boolean" default="false">
+  Skip Redis version validation
+</ParamField>
+
+<ParamField path="extraOptions.skipWaitingForReady" type="boolean" default="false">
+  Don't wait for connection to be ready
+</ParamField>
+
+## Properties
+
+### client
+
+```typescript
+client: Promise<RedisClient>
+```
+
+Returns a promise that resolves to the Redis client.
+
+### status
+
+```typescript
+status: 'initializing' | 'ready' | 'closing' | 'closed'
+```
+
+The current connection status.
+
+### capabilities
+
+```typescript
+capabilities: {
+  canDoubleTimeout: boolean;
+  canBlockFor1Ms: boolean;
+}
+```
+
+Redis server capabilities based on version.
+
+### redisVersion
+
+```typescript
+redisVersion: string
+```
+
+The detected Redis server version.
+
+### databaseType
+
+```typescript
+databaseType: 'redis' | 'dragonfly' | 'valkey'
+```
+
+The type of database being used.
+
+## Methods
+
+### disconnect
+
+Disconnects from Redis.
+
+```typescript
+disconnect(wait?: boolean): Promise<void>
+```
+
+<ParamField path="wait" type="boolean" default="true">
+  Whether to wait for disconnection to complete
+</ParamField>
+
+### reconnect
+
+Reconnects to Redis.
+
+```typescript
+reconnect(): Promise<void>
+```
+
+### close
+
+Closes the connection.
+
+```typescript
+close(force?: boolean): Promise<void>
+```
+
+<ParamField path="force" type="boolean" default="false">
+  Force close without waiting
+</ParamField>
+
+## Static Methods
+
+### waitUntilReady
+
+Waits for a Redis client to be ready.
+
+```typescript
+static waitUntilReady(client: RedisClient): Promise<void>
+```
+
+## Static Properties
+
+### minimumVersion
+
+```typescript
+static minimumVersion = '5.0.0'
+```
+
+Minimum required Redis version.
+
+### recommendedMinimumVersion
+
+```typescript
+static recommendedMinimumVersion = '6.2.0'
+```
+
+Recommended minimum Redis version.
+
+## ConnectionOptions
+
+```typescript
+type ConnectionOptions = RedisOptions | RedisClient;
+```
+
+### Using ioredis Options
+
+```typescript
+import { Queue } from 'bullmq';
+
+const queue = new Queue('myQueue', {
+  connection: {
+    host: 'localhost',
+    port: 6379,
+    password: 'mypassword',
+    db: 0,
+  },
+});
+```
+
+### Using Existing Redis Instance
+
+```typescript
+import { Queue } from 'bullmq';
+import IORedis from 'ioredis';
+
+const connection = new IORedis({
+  host: 'localhost',
+  port: 6379,
+  maxRetriesPerRequest: null,
+});
+
+const queue = new Queue('myQueue', { connection });
+```
+
+### Redis Cluster
+
+```typescript
+import { Queue } from 'bullmq';
+import IORedis from 'ioredis';
+
+const connection = new IORedis.Cluster([
+  { host: 'localhost', port: 6379 },
+  { host: 'localhost', port: 6380 },
+]);
+
+const queue = new Queue('myQueue', { connection });
+```
+
+## Events
+
+The RedisConnection class extends EventEmitter and emits the following events:
+
+### ready
+
+Emitted when the connection is ready.
+
+```typescript
+connection.on('ready', () => {
+  console.log('Connection ready');
+});
+```
+
+### error
+
+Emitted when a connection error occurs.
+
+```typescript
+connection.on('error', (error: Error) => {
+  console.error('Connection error:', error);
+});
+```
+
+### close
+
+Emitted when the connection closes.
+
+```typescript
+connection.on('close', () => {
+  console.log('Connection closed');
+});
+```
+
+## Version Requirements
+
+BullMQ requires:
+- **Minimum version**: Redis 5.0.0
+- **Recommended version**: Redis 6.2.0 or higher
+
+The connection will check the version automatically unless `skipVersionCheck` is enabled.
+
+## Important Notes
+
+### maxRetriesPerRequest
+
+For blocking connections (Workers), BullMQ requires `maxRetriesPerRequest: null`:
+
+```typescript
+// Correct
+const connection = new IORedis({
+  host: 'localhost',
+  port: 6379,
+  maxRetriesPerRequest: null, // Required for Workers
+});
+
+// BullMQ will automatically set this for you
+const queue = new Queue('myQueue', {
+  connection: {
+    host: 'localhost',
+    port: 6379,
+  },
+});
+```
+
+### Shared Connections
+
+Multiple BullMQ instances can share the same Redis connection:
+
+```typescript
+import IORedis from 'ioredis';
+
+const connection = new IORedis({
+  host: 'localhost',
+  port: 6379,
+  maxRetriesPerRequest: null,
+});
+
+// Both instances share the same connection
+const queue1 = new Queue('queue1', { connection });
+const queue2 = new Queue('queue2', { connection });
+```

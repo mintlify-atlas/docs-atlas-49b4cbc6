@@ -1,0 +1,427 @@
+---
+title: 'Graceful Shutdown'
+description: 'Properly close workers to minimize stalled jobs and ensure clean termination'
+---
+
+Graceful shutdown ensures that workers finish processing current jobs before closing, minimizing the number of stalled jobs and preventing data loss.
+
+## Why Graceful Shutdown Matters
+
+When a worker shuts down abruptly:
+
+- Jobs being processed are left in the `active` state
+- These jobs become "stalled" and must be recovered by the stalled job checker
+- Incomplete work may need to be repeated
+- Resources may not be cleaned up properly
+
+With graceful shutdown:
+
+- Current jobs complete normally (or fail gracefully)
+- No new jobs are fetched
+- Worker closes cleanly after all work is done
+- Minimal job recovery needed
+
+## Basic Graceful Shutdown
+
+Call the `close()` method on your worker:
+
+```typescript
+import { Worker } from 'bullmq';
+
+const worker = new Worker('queueName', async job => {
+  // Process job
+  return await processJob(job);
+});
+
+// Gracefully close the worker
+await worker.close();
+console.log('Worker closed gracefully');
+```
+
+### What Happens During `close()`
+
+<Steps>
+  <Step title="Worker marked as closing">
+    The worker stops fetching new jobs from the queue.
+  </Step>
+  
+  <Step title="Wait for active jobs">
+    The `close()` call waits for all currently processing jobs to complete or fail.
+  </Step>
+  
+  <Step title="Cleanup resources">
+    The worker closes Redis connections and releases resources.
+  </Step>
+  
+  <Step title="Close resolves">
+    The `close()` promise resolves once everything is cleaned up.
+  </Step>
+</Steps>
+
+## Force Shutdown
+
+If you need to close immediately without waiting for jobs:
+
+```typescript
+// Force immediate shutdown
+await worker.close(true);
+```
+
+<Warning>
+  Force shutdown will leave active jobs in a stalled state. Use only when absolutely necessary (e.g., critical errors or emergency shutdown).
+</Warning>
+
+**When to use force shutdown:**
+
+- Emergency situations requiring immediate termination
+- Worker is stuck and not responding
+- Maximum shutdown time exceeded
+
+## Handling Process Signals
+
+Listen for termination signals to gracefully shut down:
+
+```typescript
+import { Worker } from 'bullmq';
+
+const worker = new Worker('queueName', processorFunction);
+
+let isShuttingDown = false;
+
+const gracefulShutdown = async (signal: string) => {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+  
+  console.log(`Received ${signal}, starting graceful shutdown...`);
+  
+  try {
+    await worker.close();
+    console.log('Worker closed gracefully');
+    process.exit(0);
+  } catch (error) {
+    console.error('Error during shutdown:', error);
+    process.exit(1);
+  }
+};
+
+// Handle termination signals
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
+// Handle uncaught errors
+process.on('uncaughtException', async (error) => {
+  console.error('Uncaught exception:', error);
+  await gracefulShutdown('uncaughtException');
+});
+
+process.on('unhandledRejection', async (reason) => {
+  console.error('Unhandled rejection:', reason);
+  await gracefulShutdown('unhandledRejection');
+});
+```
+
+## Shutdown with Timeout
+
+<Note>
+  The `close()` method does not have a built-in timeout. You should implement your own timeout logic to prevent indefinite waiting.
+</Note>
+
+```typescript
+import { Worker } from 'bullmq';
+
+const worker = new Worker('queueName', processorFunction);
+
+const closeWithTimeout = async (
+  worker: Worker,
+  timeoutMs: number = 30000,
+): Promise<void> => {
+  const closePromise = worker.close();
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    setTimeout(
+      () => reject(new Error('Shutdown timeout exceeded')),
+      timeoutMs,
+    );
+  });
+  
+  try {
+    await Promise.race([closePromise, timeoutPromise]);
+    console.log('Worker closed gracefully');
+  } catch (error) {
+    console.error('Shutdown timeout, forcing close');
+    await worker.close(true);
+  }
+};
+
+// Use in signal handler
+process.on('SIGTERM', async () => {
+  await closeWithTimeout(worker, 30000); // 30 second timeout
+  process.exit(0);
+});
+```
+
+## Worker Lifecycle Events
+
+Monitor the shutdown process:
+
+```typescript
+import { Worker } from 'bullmq';
+
+const worker = new Worker('queueName', processorFunction);
+
+// Worker is starting to close
+worker.on('closing', (message: string) => {
+  console.log('Worker closing:', message);
+  // Stop accepting new work in your application
+});
+
+// Worker has fully closed
+worker.on('closed', () => {
+  console.log('Worker closed completely');
+  // Cleanup additional resources if needed
+});
+
+// Worker encountered an error
+worker.on('error', (error: Error) => {
+  console.error('Worker error:', error);
+});
+
+// Start graceful shutdown
+await worker.close();
+```
+
+## Multiple Workers Shutdown
+
+When running multiple workers, close them all:
+
+```typescript
+import { Worker } from 'bullmq';
+
+const workers: Worker[] = [
+  new Worker('queue1', processor1),
+  new Worker('queue2', processor2),
+  new Worker('queue3', processor3),
+];
+
+const shutdownAllWorkers = async () => {
+  console.log(`Closing ${workers.length} workers...`);
+  
+  // Close all workers in parallel
+  const closePromises = workers.map(worker => 
+    worker.close().catch(err => {
+      console.error('Error closing worker:', err);
+    })
+  );
+  
+  await Promise.all(closePromises);
+  console.log('All workers closed');
+};
+
+process.on('SIGTERM', async () => {
+  await shutdownAllWorkers();
+  process.exit(0);
+});
+```
+
+## Kubernetes/Docker Deployment
+
+For containerized environments, handle the SIGTERM signal that Kubernetes sends:
+
+```typescript
+import { Worker } from 'bullmq';
+
+const worker = new Worker('queueName', processorFunction, {
+  connection: {
+    host: process.env.REDIS_HOST,
+    port: parseInt(process.env.REDIS_PORT || '6379'),
+  },
+});
+
+let shuttingDown = false;
+
+const shutdown = async () => {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  
+  console.log('Received SIGTERM, starting graceful shutdown');
+  
+  // Kubernetes gives 30 seconds by default
+  const shutdownTimeout = setTimeout(() => {
+    console.error('Shutdown timeout, forcing exit');
+    process.exit(1);
+  }, 25000); // 25 seconds, leave 5 seconds buffer
+  
+  try {
+    await worker.close();
+    clearTimeout(shutdownTimeout);
+    console.log('Worker shutdown complete');
+    process.exit(0);
+  } catch (error) {
+    console.error('Error during shutdown:', error);
+    process.exit(1);
+  }
+};
+
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
+
+console.log('Worker started, ready to process jobs');
+```
+
+### Kubernetes Configuration
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bullmq-worker
+spec:
+  replicas: 3
+  template:
+    spec:
+      containers:
+      - name: worker
+        image: my-worker:latest
+        lifecycle:
+          preStop:
+            exec:
+              # Give app time to handle SIGTERM
+              command: ["/bin/sh", "-c", "sleep 5"]
+      # Increase termination grace period if needed
+      terminationGracePeriodSeconds: 60
+```
+
+## Stalled Job Recovery
+
+<Info>
+  In BullMQ v2.0+, the `QueueScheduler` is no longer needed for stalled job recovery. Workers automatically handle stalled jobs.
+</Info>
+
+Even with graceful shutdown, some jobs may stall due to:
+
+- Network failures
+- Worker crashes before shutdown
+- Force shutdown (close with `true`)
+
+Configure stalled job handling:
+
+```typescript
+const worker = new Worker('queueName', processorFunction, {
+  // How long a job can be locked before being considered stalled
+  lockDuration: 30000, // 30 seconds
+  
+  // How often to check for stalled jobs
+  stalledInterval: 30000, // 30 seconds
+  
+  // Maximum times a job can be recovered from stalled state
+  maxStalledCount: 1,
+  
+  // Skip stalled check for this worker (let other workers handle it)
+  skipStalledCheck: false,
+});
+```
+
+See [Stalled Jobs](/workers/stalled-jobs) for more details.
+
+## Pausing Before Shutdown
+
+Alternatively, pause the worker before closing:
+
+```typescript
+import { Worker } from 'bullmq';
+
+const worker = new Worker('queueName', processorFunction);
+
+// Pause the worker (stops fetching new jobs, waits for active jobs)
+await worker.pause();
+console.log('Worker paused');
+
+// Later, close the worker
+await worker.close();
+```
+
+See [Pausing Queues](/workers/pausing-queues) for more details.
+
+## Best Practices
+
+<Steps>
+  <Step title="Always use graceful shutdown">
+    Implement signal handlers for SIGTERM and SIGINT in production.
+  </Step>
+  
+  <Step title="Set appropriate timeouts">
+    Ensure shutdown timeout is longer than your longest job duration.
+  </Step>
+  
+  <Step title="Implement force shutdown fallback">
+    Use timeout-based force shutdown to prevent indefinite waiting.
+  </Step>
+  
+  <Step title="Monitor shutdown time">
+    Log and track how long shutdowns take to identify slow jobs.
+  </Step>
+  
+  <Step title="Test shutdown behavior">
+    Regularly test graceful shutdown in staging environments.
+  </Step>
+  
+  <Step title="Configure container grace periods">
+    In Kubernetes/Docker, set terminationGracePeriodSeconds appropriately.
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+### Shutdown Hangs Indefinitely
+
+**Cause**: Jobs are taking too long to complete.
+
+**Solution**: Implement a shutdown timeout and force close:
+
+```typescript
+const timeout = setTimeout(() => {
+  console.error('Force closing after timeout');
+  worker.close(true);
+}, 30000);
+
+await worker.close();
+clearTimeout(timeout);
+```
+
+### Jobs Keep Stalling After Restart
+
+**Cause**: Jobs take longer than `lockDuration`.
+
+**Solution**: Increase lock duration:
+
+```typescript
+new Worker('queueName', processorFunction, {
+  lockDuration: 60000, // Increase from 30s to 60s
+});
+```
+
+### Worker Doesn't Respond to SIGTERM
+
+**Cause**: No signal handler attached.
+
+**Solution**: Add signal handlers as shown above.
+
+## Related Topics
+
+<CardGroup cols={2}>
+  <Card title="Pausing Queues" icon="pause" href="/workers/pausing-queues">
+    Pause workers without closing
+  </Card>
+  <Card title="Stalled Jobs" icon="clock" href="/workers/stalled-jobs">
+    Understanding stalled job recovery
+  </Card>
+  <Card title="Cancelling Jobs" icon="ban" href="/workers/cancelling-jobs">
+    Cancel jobs during shutdown
+  </Card>
+  <Card title="Worker Options" icon="gear" href="/workers/overview">
+    Configure worker behavior
+  </Card>
+</CardGroup>
+
+## API Reference
+
+- [Worker.close() API Reference](https://api.docs.bullmq.io/classes/v5.Worker.html#close)

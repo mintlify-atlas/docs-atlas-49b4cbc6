@@ -1,0 +1,291 @@
+---
+title: 'WorkerOptions'
+description: 'Configuration options for Worker instances'
+---
+
+## Overview
+
+WorkerOptions extends QueueBaseOptions and provides configuration for Worker instances.
+
+## Interface
+
+```typescript
+interface WorkerOptions extends QueueBaseOptions {
+  name?: string;
+  autorun?: boolean;
+  concurrency?: number;
+  limiter?: RateLimiterOptions;
+  metrics?: MetricsOptions;
+  maximumRateLimitDelay?: number;
+  maxStartedAttempts?: number;
+  maxStalledCount?: number;
+  stalledInterval?: number;
+  removeOnComplete?: KeepJobs;
+  removeOnFail?: KeepJobs;
+  skipStalledCheck?: boolean;
+  skipLockRenewal?: boolean;
+  drainDelay?: number;
+  lockDuration?: number;
+  lockRenewTime?: number;
+  runRetryDelay?: number;
+  settings?: AdvancedOptions;
+  useWorkerThreads?: boolean;
+}
+```
+
+## Properties
+
+### connection
+
+<ParamField path="connection" type="ConnectionOptions" required>
+  Options for connecting to a Redis instance
+</ParamField>
+
+### name
+
+<ParamField path="name" type="string">
+  Optional worker name stored on every job processed by this worker
+</ParamField>
+
+### autorun
+
+<ParamField path="autorun" type="boolean" default="true">
+  Whether to start processing jobs automatically on instantiation
+</ParamField>
+
+### concurrency
+
+<ParamField path="concurrency" type="number" default="1">
+  Number of jobs that a single worker can process in parallel
+</ParamField>
+
+### limiter
+
+<ParamField path="limiter" type="RateLimiterOptions">
+  Rate limiter configuration
+</ParamField>
+
+### metrics
+
+<ParamField path="metrics" type="MetricsOptions">
+  Metrics collection configuration
+</ParamField>
+
+### maximumRateLimitDelay
+
+<ParamField path="maximumRateLimitDelay" type="number" default="30000">
+  Maximum time in milliseconds where the job is idle while being rate limited
+</ParamField>
+
+### maxStartedAttempts
+
+<ParamField path="maxStartedAttempts" type="number">
+  Maximum number of times a job can start processing before being moved to failed
+</ParamField>
+
+### maxStalledCount
+
+<ParamField path="maxStalledCount" type="number" default="1">
+  Number of times a job can be recovered from stalled state before moving to failed
+</ParamField>
+
+### stalledInterval
+
+<ParamField path="stalledInterval" type="number" default="30000">
+  Number of milliseconds between stallness checks
+</ParamField>
+
+### removeOnComplete
+
+<ParamField path="removeOnComplete" type="KeepJobs">
+  Specifies max age and/or count of jobs to keep when completed
+</ParamField>
+
+### removeOnFail
+
+<ParamField path="removeOnFail" type="KeepJobs">
+  Specifies max age and/or count of jobs to keep when failed
+</ParamField>
+
+### skipStalledCheck
+
+<ParamField path="skipStalledCheck" type="boolean" default="false">
+  Skip stalled check for this worker
+</ParamField>
+
+### skipLockRenewal
+
+<ParamField path="skipLockRenewal" type="boolean" default="false">
+  Skip automatic lock renewal for this worker
+</ParamField>
+
+### drainDelay
+
+<ParamField path="drainDelay" type="number" default="5">
+  Number of seconds to long poll for jobs when the queue is empty
+</ParamField>
+
+### lockDuration
+
+<ParamField path="lockDuration" type="number" default="30000">
+  Duration of the lock for the job in milliseconds
+</ParamField>
+
+### lockRenewTime
+
+<ParamField path="lockRenewTime" type="number">
+  Time in milliseconds before the lock is automatically renewed (default: lockDuration / 2)
+</ParamField>
+
+### runRetryDelay
+
+<ParamField path="runRetryDelay" type="number" default="15000">
+  Internal option for retry delay
+</ParamField>
+
+### settings
+
+<ParamField path="settings" type="AdvancedOptions">
+  Advanced worker settings including custom backoff strategies
+</ParamField>
+
+### useWorkerThreads
+
+<ParamField path="useWorkerThreads" type="boolean" default="false">
+  Use Worker Threads instead of Child Processes for sandboxed processors
+</ParamField>
+
+## Examples
+
+### Basic Worker
+
+```typescript
+import { Worker } from 'bullmq';
+
+const worker = new Worker('myQueue', async (job) => {
+  // Process job
+  return { processed: true };
+}, {
+  connection: {
+    host: 'localhost',
+    port: 6379,
+  },
+});
+```
+
+### With Concurrency
+
+```typescript
+const worker = new Worker('myQueue', processor, {
+  connection: {
+    host: 'localhost',
+    port: 6379,
+  },
+  concurrency: 10,  // Process up to 10 jobs concurrently
+});
+```
+
+### With Rate Limiter
+
+```typescript
+const worker = new Worker('myQueue', processor, {
+  connection: {
+    host: 'localhost',
+    port: 6379,
+  },
+  limiter: {
+    max: 100,        // Max 100 jobs
+    duration: 60000, // Per 60 seconds
+  },
+});
+```
+
+### With Auto-Cleanup
+
+```typescript
+const worker = new Worker('myQueue', processor, {
+  connection: {
+    host: 'localhost',
+    port: 6379,
+  },
+  removeOnComplete: {
+    age: 3600,  // Keep completed jobs for 1 hour
+    count: 1000, // Keep max 1000 completed jobs
+  },
+  removeOnFail: {
+    age: 86400, // Keep failed jobs for 24 hours
+  },
+});
+```
+
+### Named Worker
+
+```typescript
+const worker = new Worker('myQueue', processor, {
+  connection: {
+    host: 'localhost',
+    port: 6379,
+  },
+  name: 'worker-1',  // Name appears in job.processedBy
+});
+```
+
+### With Sandboxed Processor
+
+```typescript
+const worker = new Worker(
+  'myQueue',
+  './processor.js',  // Path to processor file
+  {
+    connection: {
+      host: 'localhost',
+      port: 6379,
+    },
+    useWorkerThreads: true,  // Use worker threads
+    concurrency: 4,
+  }
+);
+```
+
+### With Custom Stalled Settings
+
+```typescript
+const worker = new Worker('myQueue', processor, {
+  connection: {
+    host: 'localhost',
+    port: 6379,
+  },
+  maxStalledCount: 3,     // Allow job to stall 3 times
+  stalledInterval: 60000, // Check for stalled jobs every minute
+  lockDuration: 60000,    // Lock jobs for 1 minute
+});
+```
+
+### Manual Run
+
+```typescript
+const worker = new Worker('myQueue', processor, {
+  connection: {
+    host: 'localhost',
+    port: 6379,
+  },
+  autorun: false,  // Don't start automatically
+});
+
+// Start manually later
+await worker.run();
+```
+
+## KeepJobs Type
+
+```typescript
+type KeepJobs = boolean | number | {
+  age?: number;    // Max age in seconds
+  count?: number;  // Max count to keep
+};
+```
+
+## Related Interfaces
+
+- [QueueOptions](/api/interfaces/queue-options) - Configuration for Queues
+- [JobOptions](/api/interfaces/job-options) - Configuration for individual jobs

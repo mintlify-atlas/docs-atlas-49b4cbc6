@@ -1,0 +1,118 @@
+---
+title: Installation
+description: How to install BullMQ for Python
+---
+
+## Install via pip
+
+BullMQ is available as a Python package on PyPI and can be installed using pip:
+
+```bash
+pip install bullmq
+```
+
+## Requirements
+
+- **Python**: 3.10 or higher
+- **Redis**: 5.0 or higher (6.2+ recommended for best performance)
+
+## Dependencies
+
+The package automatically installs the following dependencies:
+
+- **redis** (6.4.0) - Python Redis client
+- **msgpack** (1.1.2) - MessagePack serialization
+- **semver** (3.0.4) - Semantic versioning utilities
+
+## Development Installation
+
+If you want to contribute to BullMQ Python or install from source:
+
+```bash
+# Clone the repository
+git clone https://github.com/taskforcesh/bullmq.git
+cd bullmq/python
+
+# Install in development mode
+pip install -e .
+
+# Install development dependencies
+pip install -e ".[dev]"
+```
+
+## Verify Installation
+
+You can verify the installation by importing the package:
+
+```python
+import bullmq
+print(bullmq.__version__)
+```
+
+## Redis Setup
+
+BullMQ requires a Redis server. You can:
+
+### Run Redis Locally
+
+```bash
+# Using Docker
+docker run -d -p 6379:6379 redis:latest
+
+# Or install Redis directly
+# On Ubuntu/Debian:
+sudo apt-get install redis-server
+
+# On macOS:
+brew install redis
+```
+
+### Use a Managed Redis Service
+
+For production, consider using a managed Redis service:
+
+- [Redis Cloud](https://redis.com/cloud/)
+- [AWS ElastiCache](https://aws.amazon.com/elasticache/)
+- [Google Cloud Memorystore](https://cloud.google.com/memorystore)
+- [Azure Cache for Redis](https://azure.microsoft.com/en-us/services/cache/)
+
+## Connection Configuration
+
+When creating a Queue or Worker, you can specify Redis connection details:
+
+```python
+from bullmq import Queue
+
+# Using connection string
+queue = Queue(
+    "myQueue",
+    {"connection": "rediss://<user>:<password>@<host>:<port>"}
+)
+
+# Or using connection parameters (if using a custom Redis client)
+# Note: The Python client handles connections internally
+```
+
+## Common Issues
+
+### Binary Response Warnings
+
+If you see warnings about binary responses, ensure your Redis client is configured with `decode_responses=True`:
+
+<Warning>
+  If Redis responses are in binary format, pass the `decode_responses=True` option. See the [redis-py documentation](https://redis-py.readthedocs.io/en/latest/examples/connection_examples.html) for more details.
+</Warning>
+
+### Connection Errors
+
+If you can't connect to Redis:
+
+1. Verify Redis is running: `redis-cli ping` (should return `PONG`)
+2. Check your connection string has the correct host, port, and credentials
+3. Ensure your firewall allows connections to the Redis port (default: 6379)
+
+## Next Steps
+
+<Card title="Usage Guide" icon="code" href="/python/usage">
+  Learn how to create queues and workers
+</Card>

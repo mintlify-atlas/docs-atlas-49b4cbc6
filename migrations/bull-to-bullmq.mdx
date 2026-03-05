@@ -1,0 +1,417 @@
+---
+title: Bull to BullMQ Migration
+description: Tips and guidance for migrating from Bull to BullMQ
+---
+
+Bull and BullMQ have diverged significantly over time, making backwards compatibility difficult to guarantee. This guide provides the safest approach to migrating from Bull to BullMQ.
+
+## Why Migrate?
+
+BullMQ offers several advantages over Bull:
+
+- **Active Development** - BullMQ is actively maintained with regular updates
+- **Better Performance** - Improved Redis operations and optimizations
+- **New Features** - Flow producers, job groups, rate limiting improvements
+- **TypeScript Support** - Better type definitions and TypeScript integration
+- **Improved Architecture** - Cleaner codebase and better patterns
+
+<Warning>
+**Important:** Bull and BullMQ are not backwards compatible. You cannot simply replace Bull with BullMQ without following a migration strategy.
+</Warning>
+
+## Recommended Migration Strategy
+
+The safest approach is to use **new queues** for BullMQ and deprecate the old Bull queues.
+
+<Steps>
+  <Step title="Create new queues with different names or prefix">
+    Use different queue names or a custom prefix to separate Bull and BullMQ queues:
+    
+    **Option 1: Different Queue Names**
+    ```typescript
+    // Old Bull queue
+    import Queue from 'bull';
+    const oldQueue = new Queue('myqueue');
+    
+    // New BullMQ queue with different name
+    import { Queue } from 'bullmq';
+    const newQueue = new Queue('myqueue-v2');
+    ```
+    
+    **Option 2: Different Prefix**
+    ```typescript
+    // Old Bull queue (default prefix: "bull")
+    import Queue from 'bull';
+    const oldQueue = new Queue('myqueue');
+    
+    // New BullMQ queue with custom prefix
+    import { Queue } from 'bullmq';
+    const newQueue = new Queue('myqueue', {
+      prefix: 'bullmq',
+    });
+    ```
+  </Step>
+  
+  <Step title="Run Bull and BullMQ workers in parallel">
+    During the migration period, run both Bull workers (for old queues) and BullMQ workers (for new queues) simultaneously:
+    
+    ```typescript
+    // Bull worker (old)
+    import Queue from 'bull';
+    
+    const oldQueue = new Queue('myqueue');
+    
+    oldQueue.process(async (job) => {
+      console.log('Processing old job:', job.id);
+      // Process job
+    });
+    
+    // BullMQ worker (new)
+    import { Worker } from 'bullmq';
+    
+    const newWorker = new Worker(
+      'myqueue-v2',
+      async (job) => {
+        console.log('Processing new job:', job.id);
+        // Process job
+      },
+      {
+        connection: {
+          host: 'localhost',
+          port: 6379,
+        },
+      }
+    );
+    ```
+  </Step>
+  
+  <Step title="Direct all new jobs to BullMQ queues">
+    Update your producers to add jobs to the new BullMQ queues:
+    
+    ```typescript
+    // Before (Bull)
+    import Queue from 'bull';
+    const queue = new Queue('myqueue');
+    await queue.add({ data: 'value' });
+    
+    // After (BullMQ)
+    import { Queue } from 'bullmq';
+    const queue = new Queue('myqueue-v2');
+    await queue.add('job-name', { data: 'value' });
+    ```
+    
+    <Info>
+    Note that BullMQ requires a job name as the first parameter to `add()`.
+    </Info>
+  </Step>
+  
+  <Step title="Monitor old queues until drained">
+    Keep Bull workers running until all old jobs are processed:
+    
+    ```typescript
+    import Queue from 'bull';
+    
+    const oldQueue = new Queue('myqueue');
+    
+    // Check queue status
+    const waitingCount = await oldQueue.getWaitingCount();
+    const activeCount = await oldQueue.getActiveCount();
+    const delayedCount = await oldQueue.getDelayedCount();
+    
+    console.log('Remaining jobs:', {
+      waiting: waitingCount,
+      active: activeCount,
+      delayed: delayedCount,
+    });
+    
+    // Queue is drained when all counts are 0
+    if (waitingCount === 0 && activeCount === 0 && delayedCount === 0) {
+      console.log('Old queue is drained - safe to remove Bull workers');
+    }
+    ```
+  </Step>
+  
+  <Step title="Remove Bull workers once queues are empty">
+    Once all old queues are completely drained, you can safely shut down Bull workers and remove the Bull dependency:
+    
+    ```bash
+    npm uninstall bull
+    ```
+  </Step>
+</Steps>
+
+## Monitoring the Migration
+
+Use a dashboard tool to monitor both Bull and BullMQ queues during migration:
+
+<Card title="Taskforce.sh" icon="chart-line" href="https://taskforce.sh">
+  Professional queue monitoring and management tool that supports both Bull and BullMQ
+</Card>
+
+This helps ensure:
+- Old queues are draining properly
+- New queues are processing jobs correctly
+- No jobs are stuck or lost during migration
+
+## API Differences
+
+Key differences between Bull and BullMQ:
+
+<Tabs>
+  <Tab title="Adding Jobs">
+    **Bull:**
+    ```typescript
+    await queue.add({ data: 'value' });
+    await queue.add({ data: 'value' }, { delay: 5000 });
+    ```
+    
+    **BullMQ:**
+    ```typescript
+    await queue.add('job-name', { data: 'value' });
+    await queue.add('job-name', { data: 'value' }, { delay: 5000 });
+    ```
+    
+    <Info>
+    BullMQ requires a job name as the first parameter.
+    </Info>
+  </Tab>
+  
+  <Tab title="Processing Jobs">
+    **Bull:**
+    ```typescript
+    queue.process(async (job) => {
+      // Process job
+      return result;
+    });
+    ```
+    
+    **BullMQ:**
+    ```typescript
+    import { Worker } from 'bullmq';
+    
+    const worker = new Worker(
+      'queue-name',
+      async (job) => {
+        // Process job
+        return result;
+      },
+      { connection }
+    );
+    ```
+  </Tab>
+  
+  <Tab title="Events">
+    **Bull:**
+    ```typescript
+    queue.on('completed', (job, result) => {
+      console.log('Completed:', job.id);
+    });
+    ```
+    
+    **BullMQ:**
+    ```typescript
+    import { QueueEvents } from 'bullmq';
+    
+    const queueEvents = new QueueEvents('queue-name', { connection });
+    
+    queueEvents.on('completed', ({ jobId }) => {
+      console.log('Completed:', jobId);
+    });
+    ```
+    
+    <Info>
+    BullMQ separates events into a dedicated `QueueEvents` class for better performance.
+    </Info>
+  </Tab>
+  
+  <Tab title="Connection">
+    **Bull:**
+    ```typescript
+    const queue = new Queue('myqueue', {
+      redis: {
+        host: 'localhost',
+        port: 6379,
+      },
+    });
+    ```
+    
+    **BullMQ:**
+    ```typescript
+    const queue = new Queue('myqueue', {
+      connection: {
+        host: 'localhost',
+        port: 6379,
+      },
+    });
+    ```
+    
+    <Info>
+    The `redis` option is now called `connection` in BullMQ.
+    </Info>
+  </Tab>
+</Tabs>
+
+## Migration Checklist
+
+<AccordionGroup>
+  <Accordion title="Planning Phase">
+    - [ ] Identify all Bull queues in your application
+    - [ ] Decide on naming strategy (new names vs. prefix)
+    - [ ] Plan monitoring approach
+    - [ ] Schedule migration window
+    - [ ] Prepare rollback plan
+  </Accordion>
+  
+  <Accordion title="Implementation Phase">
+    - [ ] Install BullMQ: `npm install bullmq`
+    - [ ] Create new BullMQ queues with different names/prefix
+    - [ ] Implement BullMQ workers
+    - [ ] Update producers to use BullMQ queues
+    - [ ] Test BullMQ implementation in staging
+  </Accordion>
+  
+  <Accordion title="Deployment Phase">
+    - [ ] Deploy BullMQ workers alongside Bull workers
+    - [ ] Switch producers to add jobs to BullMQ queues
+    - [ ] Monitor both Bull and BullMQ queues
+    - [ ] Verify new jobs are processing correctly
+  </Accordion>
+  
+  <Accordion title="Completion Phase">
+    - [ ] Monitor old Bull queues until empty
+    - [ ] Verify no jobs remain in Bull queues
+    - [ ] Shut down Bull workers
+    - [ ] Remove Bull dependency
+    - [ ] Clean up old queue data from Redis (optional)
+  </Accordion>
+</AccordionGroup>
+
+## Example: Complete Migration
+
+### Before (Bull)
+
+```typescript bull-example.ts
+import Queue from 'bull';
+
+// Create queue
+const emailQueue = new Queue('emails', {
+  redis: {
+    host: 'localhost',
+    port: 6379,
+  },
+});
+
+// Add job
+await emailQueue.add(
+  {
+    to: 'user@example.com',
+    subject: 'Hello',
+  },
+  {
+    attempts: 3,
+    backoff: 1000,
+  }
+);
+
+// Process jobs
+emailQueue.process(async (job) => {
+  const { to, subject } = job.data;
+  // Send email
+  console.log(`Sending email to ${to}`);
+});
+
+// Listen to events
+emailQueue.on('completed', (job) => {
+  console.log(`Email sent: ${job.id}`);
+});
+```
+
+### After (BullMQ)
+
+```typescript bullmq-example.ts
+import { Queue, Worker, QueueEvents } from 'bullmq';
+
+const connection = {
+  host: 'localhost',
+  port: 6379,
+};
+
+// Create queue with different name
+const emailQueue = new Queue('emails-v2', { connection });
+
+// Add job (note: job name required)
+await emailQueue.add(
+  'send-email',
+  {
+    to: 'user@example.com',
+    subject: 'Hello',
+  },
+  {
+    attempts: 3,
+    backoff: {
+      type: 'exponential',
+      delay: 1000,
+    },
+  }
+);
+
+// Process jobs with Worker
+const worker = new Worker(
+  'emails-v2',
+  async (job) => {
+    const { to, subject } = job.data;
+    // Send email
+    console.log(`Sending email to ${to}`);
+  },
+  { connection }
+);
+
+// Listen to events with QueueEvents
+const queueEvents = new QueueEvents('emails-v2', { connection });
+
+queueEvents.on('completed', ({ jobId }) => {
+  console.log(`Email sent: ${jobId}`);
+});
+```
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Jobs not being processed">
+    - Verify Worker is running and connected
+    - Check queue name matches between Queue and Worker
+    - Ensure connection settings are correct
+    - Check for errors in worker event handlers
+  </Accordion>
+  
+  <Accordion title="Old jobs still in Bull queues">
+    - Verify Bull workers are still running
+    - Check for failed jobs that need to be retried
+    - Look for delayed jobs that haven't reached their time
+    - Monitor stalled jobs
+  </Accordion>
+  
+  <Accordion title="Performance issues">
+    - Adjust worker concurrency settings
+    - Monitor Redis memory usage
+    - Check network latency between workers and Redis
+    - Review job processing code for bottlenecks
+  </Accordion>
+</AccordionGroup>
+
+## Related Resources
+
+<CardGroup cols={2}>
+  <Card title="Newer Versions" icon="arrow-up" href="/migrations/newer-versions">
+    Upgrading between BullMQ versions
+  </Card>
+  <Card title="Going to Production" icon="rocket" href="/operations/going-to-production">
+    Production deployment best practices
+  </Card>
+  <Card title="Worker Prefix Option" icon="book" href="https://api.docs.bullmq.io/interfaces/v5.WorkerOptions.html#prefix">
+    API reference for Worker prefix option
+  </Card>
+  <Card title="Queue Prefix Option" icon="book" href="https://api.docs.bullmq.io/interfaces/v5.QueueOptions.html#prefix">
+    API reference for Queue prefix option
+  </Card>
+</CardGroup>

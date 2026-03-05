@@ -1,0 +1,245 @@
+---
+title: 'UnrecoverableError'
+description: 'Error to move a job to failed state immediately without retries'
+---
+
+## Overview
+
+Throw UnrecoverableError from a job processor to immediately fail the job, bypassing any remaining retry attempts.
+
+## Class
+
+```typescript
+class UnrecoverableError extends Error {
+  constructor(message?: string);
+}
+```
+
+## Usage
+
+Use UnrecoverableError when a job fails in a way that retrying won't help:
+
+```typescript
+import { Worker, UnrecoverableError } from 'bullmq';
+
+const worker = new Worker('myQueue', async (job) => {
+  // Validation errors shouldn't be retried
+  if (!job.data.userId) {
+    throw new UnrecoverableError('Missing required field: userId');
+  }
+  
+  // Business logic errors
+  const user = await getUser(job.data.userId);
+  if (!user) {
+    throw new UnrecoverableError(`User ${job.data.userId} not found`);
+  }
+  
+  if (user.status === 'deleted') {
+    throw new UnrecoverableError('Cannot process job for deleted user');
+  }
+  
+  // Process the job
+  return await processUser(user);
+});
+```
+
+## Examples
+
+### Validation Errors
+
+```typescript
+import { UnrecoverableError } from 'bullmq';
+
+const processor = async (job) => {
+  // Validate required fields
+  if (!job.data.email) {
+    throw new UnrecoverableError('Email is required');
+  }
+  
+  // Validate email format
+  if (!isValidEmail(job.data.email)) {
+    throw new UnrecoverableError('Invalid email format');
+  }
+  
+  // Validate business rules
+  if (job.data.amount < 0) {
+    throw new UnrecoverableError('Amount cannot be negative');
+  }
+  
+  return await sendEmail(job.data.email);
+};
+```
+
+### Resource Not Found
+
+```typescript
+const processor = async (job) => {
+  const resource = await db.findById(job.data.resourceId);
+  
+  if (!resource) {
+    throw new UnrecoverableError(
+      `Resource ${job.data.resourceId} not found`
+    );
+  }
+  
+  return await processResource(resource);
+};
+```
+
+### Permission Errors
+
+```typescript
+const processor = async (job) => {
+  const user = await getUser(job.data.userId);
+  
+  if (!user.hasPermission('admin')) {
+    throw new UnrecoverableError(
+      'User does not have required permissions'
+    );
+  }
+  
+  return await performAdminAction(job.data);
+};
+```
+
+### Configuration Errors
+
+```typescript
+const processor = async (job) => {
+  const config = await getConfig(job.data.configId);
+  
+  if (!config.apiKey) {
+    throw new UnrecoverableError(
+      'API key not configured for this service'
+    );
+  }
+  
+  return await callExternalAPI(config.apiKey, job.data);
+};
+```
+
+### Conditional Retry Logic
+
+```typescript
+const processor = async (job) => {
+  try {
+    return await callAPI(job.data);
+  } catch (error) {
+    // 4xx errors shouldn't be retried
+    if (error.statusCode >= 400 && error.statusCode < 500) {
+      throw new UnrecoverableError(
+        `API returned ${error.statusCode}: ${error.message}`
+      );
+    }
+    
+    // 5xx errors can be retried
+    throw error;
+  }
+};
+```
+
+## Comparison with Regular Errors
+
+### Regular Error (with retries)
+
+```typescript
+const worker = new Worker('myQueue', async (job) => {
+  // This will retry based on job.opts.attempts
+  throw new Error('Temporary failure');
+}, {
+  connection: { host: 'localhost', port: 6379 },
+});
+
+await queue.add('task', { data }, {
+  attempts: 3,  // Will retry 3 times
+  backoff: {
+    type: 'exponential',
+    delay: 1000,
+  },
+});
+```
+
+### UnrecoverableError (no retries)
+
+```typescript
+const worker = new Worker('myQueue', async (job) => {
+  // This will fail immediately, ignoring attempts setting
+  throw new UnrecoverableError('Validation failed');
+}, {
+  connection: { host: 'localhost', port: 6379 },
+});
+
+await queue.add('task', { data }, {
+  attempts: 3,  // Ignored when UnrecoverableError is thrown
+});
+```
+
+## Error Message
+
+Provide clear error messages to help with debugging:
+
+```typescript
+const processor = async (job) => {
+  const user = await getUser(job.data.userId);
+  
+  if (!user) {
+    throw new UnrecoverableError(
+      `User not found: ${job.data.userId}. ` +
+      `Job ID: ${job.id}, Created: ${new Date(job.timestamp).toISOString()}`
+    );
+  }
+  
+  return await processUser(user);
+};
+```
+
+## Handling Failed Jobs
+
+Listen for failed events to handle unrecoverable errors:
+
+```typescript
+import { Worker, UnrecoverableError } from 'bullmq';
+
+const worker = new Worker('myQueue', processor);
+
+worker.on('failed', (job, error) => {
+  if (error.name === 'UnrecoverableError') {
+    console.log(`Job ${job.id} failed with unrecoverable error:`, error.message);
+    
+    // Send alert, log to monitoring service, etc.
+    sendAlert({
+      jobId: job.id,
+      error: error.message,
+      data: job.data,
+    });
+  } else {
+    console.log(`Job ${job.id} failed:`, error.message);
+  }
+});
+```
+
+## When to Use UnrecoverableError
+
+Use UnrecoverableError for:
+
+- **Validation errors**: Missing or invalid input data
+- **Resource not found**: Database records that don't exist
+- **Permission denied**: Authorization failures
+- **Configuration errors**: Missing API keys or invalid settings
+- **Business rule violations**: Logical errors that won't change with retries
+- **4xx HTTP errors**: Client errors from external APIs
+
+Don't use UnrecoverableError for:
+
+- **Network errors**: Temporary connection issues
+- **5xx HTTP errors**: Server errors that might be temporary
+- **Rate limiting**: Use [RateLimitError](/api/errors/rate-limit-error) instead
+- **Timeouts**: These might succeed on retry
+- **Database connection errors**: Temporary infrastructure issues
+
+## Related
+
+- [RateLimitError](/api/errors/rate-limit-error) - Error for rate limiting
+- [DelayedError](/api/errors/delayed-error) - Move job back to delayed state
+- [Job](/api/job) - Job class documentation
+- [Worker](/api/worker) - Worker class documentation

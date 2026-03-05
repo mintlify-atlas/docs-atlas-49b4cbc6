@@ -1,0 +1,180 @@
+---
+title: 'ErrorCode'
+description: 'Enum of error codes returned by BullMQ Lua scripts'
+---
+
+## Overview
+
+The ErrorCode enum contains error codes that can be returned by BullMQ's Lua scripts when operations fail.
+
+## Enum
+
+```typescript
+enum ErrorCode {
+  JobNotExist = -1,
+  JobLockNotExist = -2,
+  JobNotInState = -3,
+  JobPendingChildren = -4,
+  ParentJobNotExist = -5,
+  JobLockMismatch = -6,
+  ParentJobCannotBeReplaced = -7,
+  JobBelongsToJobScheduler = -8,
+  JobHasFailedChildren = -9,
+  SchedulerJobIdCollision = -10,
+  SchedulerJobSlotsBusy = -11,
+}
+```
+
+## Error Codes
+
+### JobNotExist
+
+<ParamField path="JobNotExist" type="-1">
+  The specified job does not exist in Redis
+</ParamField>
+
+This error occurs when trying to operate on a job that has been removed or never existed.
+
+```typescript
+// Example: Trying to get a non-existent job
+const job = await queue.getJob('non-existent-id');
+// job will be undefined
+```
+
+### JobLockNotExist
+
+<ParamField path="JobLockNotExist" type="-2">
+  The job's lock does not exist
+</ParamField>
+
+This error indicates that the job is not locked, which can happen if:
+- The lock expired
+- The job was never locked
+- Another worker stole the lock
+
+### JobNotInState
+
+<ParamField path="JobNotInState" type="-3">
+  The job is not in the expected state for the requested operation
+</ParamField>
+
+For example, trying to promote a job that's not in the delayed state:
+
+```typescript
+// This will fail if job is not delayed
+await job.promote();
+```
+
+### JobPendingChildren
+
+<ParamField path="JobPendingChildren" type="-4">
+  The job still has pending children and cannot be processed
+</ParamField>
+
+This occurs when trying to move a parent job to active while it still has unfinished children.
+
+### ParentJobNotExist
+
+<ParamField path="ParentJobNotExist" type="-5">
+  The parent job specified does not exist
+</ParamField>
+
+Occurs when creating a child job with a non-existent parent:
+
+```typescript
+await queue.add('child', { data }, {
+  parent: {
+    id: 'non-existent-parent',
+    queue: 'bull:parentQueue',
+  },
+});
+```
+
+### JobLockMismatch
+
+<ParamField path="JobLockMismatch" type="-6">
+  The provided lock token doesn't match the job's current lock
+</ParamField>
+
+This prevents one worker from modifying a job locked by another worker.
+
+### ParentJobCannotBeReplaced
+
+<ParamField path="ParentJobCannotBeReplaced" type="-7">
+  The parent job cannot be replaced while it has children
+</ParamField>
+
+Occurs when trying to replace a job that has child dependencies.
+
+### JobBelongsToJobScheduler
+
+<ParamField path="JobBelongsToJobScheduler" type="-8">
+  The job belongs to a job scheduler and cannot be modified directly
+</ParamField>
+
+Jobs created by job schedulers (repeatable jobs) cannot be modified directly.
+
+### JobHasFailedChildren
+
+<ParamField path="JobHasFailedChildren" type="-9">
+  The job cannot proceed because it has failed children
+</ParamField>
+
+This error occurs when a parent job's children have failed and the parent cannot continue.
+
+### SchedulerJobIdCollision
+
+<ParamField path="SchedulerJobIdCollision" type="-10">
+  A job scheduler with this ID already exists
+</ParamField>
+
+Occurs when trying to create a job scheduler with an ID that's already in use.
+
+### SchedulerJobSlotsBusy
+
+<ParamField path="SchedulerJobSlotsBusy" type="-11">
+  The job scheduler's time slots are busy
+</ParamField>
+
+This can occur when the scheduler is trying to create jobs but the slots are already occupied.
+
+## Usage
+
+These error codes are typically returned by internal Lua scripts and converted to JavaScript errors. You generally won't use these directly, but they may appear in error messages:
+
+```typescript
+import { Job } from 'bullmq';
+
+try {
+  await job.promote();
+} catch (error) {
+  console.error('Failed to promote job:', error.message);
+  // Error message may reference error codes
+}
+```
+
+## Handling Script Errors
+
+When BullMQ operations fail, the errors usually include descriptive messages:
+
+```typescript
+import { Queue } from 'bullmq';
+
+const queue = new Queue('myQueue');
+
+try {
+  await queue.remove('job-id');
+} catch (error) {
+  if (error.message.includes('locked')) {
+    console.log('Job is locked by another worker');
+  } else if (error.message.includes('not exist')) {
+    console.log('Job does not exist');
+  }
+}
+```
+
+## Related
+
+- [UnrecoverableError](/api/errors/unrecoverable-error) - Error to fail jobs immediately
+- [RateLimitError](/api/errors/rate-limit-error) - Error for rate limiting
+- [Job](/api/job) - Job class that may encounter these errors

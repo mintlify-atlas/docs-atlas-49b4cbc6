@@ -1,0 +1,215 @@
+---
+title: 'QueueOptions'
+description: 'Configuration options for Queue instances'
+---
+
+## Overview
+
+QueueOptions extends QueueBaseOptions and provides configuration for Queue instances.
+
+## Interface
+
+```typescript
+interface QueueOptions extends QueueBaseOptions {
+  defaultJobOptions?: DefaultJobOptions;
+  streams?: {
+    events: {
+      maxLen: number;
+    };
+  };
+  skipMetasUpdate?: boolean;
+  settings?: AdvancedRepeatOptions;
+}
+```
+
+## Properties
+
+### connection
+
+```typescript
+connection: ConnectionOptions
+```
+
+<ParamField path="connection" type="ConnectionOptions" required>
+  Options for connecting to a Redis instance (ioredis configuration or Redis client instance)
+</ParamField>
+
+### prefix
+
+```typescript
+prefix?: string
+```
+
+<ParamField path="prefix" type="string" default="'bull'">
+  Prefix for all queue keys in Redis
+</ParamField>
+
+### defaultJobOptions
+
+```typescript
+defaultJobOptions?: DefaultJobOptions
+```
+
+<ParamField path="defaultJobOptions" type="DefaultJobOptions">
+  Default options applied to all jobs added to this queue
+</ParamField>
+
+### streams
+
+```typescript
+streams?: {
+  events: {
+    maxLen: number;
+  };
+}
+```
+
+<ParamField path="streams.events.maxLen" type="number" default="10000">
+  Max approximated length for the events stream
+</ParamField>
+
+### skipMetasUpdate
+
+```typescript
+skipMetasUpdate?: boolean
+```
+
+<ParamField path="skipMetasUpdate" type="boolean" default="false">
+  If true, the queue will not update metadata. Useful for read-only systems
+</ParamField>
+
+### settings
+
+```typescript
+settings?: AdvancedRepeatOptions
+```
+
+<ParamField path="settings" type="AdvancedRepeatOptions">
+  Advanced options for repeatable jobs
+</ParamField>
+
+### skipVersionCheck
+
+```typescript
+skipVersionCheck?: boolean
+```
+
+<ParamField path="skipVersionCheck" type="boolean" default="false">
+  Avoid validation that Redis version is >= 5.0.0
+</ParamField>
+
+### skipWaitingForReady
+
+```typescript
+skipWaitingForReady?: boolean
+```
+
+<ParamField path="skipWaitingForReady" type="boolean" default="false">
+  Skip waiting for connection to be ready (useful for testing)
+</ParamField>
+
+### telemetry
+
+```typescript
+telemetry?: Telemetry
+```
+
+<ParamField path="telemetry" type="Telemetry">
+  Telemetry client for distributed tracing and metrics
+</ParamField>
+
+## Examples
+
+### Basic Queue
+
+```typescript
+import { Queue } from 'bullmq';
+
+const queue = new Queue('myQueue', {
+  connection: {
+    host: 'localhost',
+    port: 6379,
+  },
+});
+```
+
+### With Default Job Options
+
+```typescript
+const queue = new Queue('myQueue', {
+  connection: {
+    host: 'localhost',
+    port: 6379,
+  },
+  defaultJobOptions: {
+    attempts: 3,
+    backoff: {
+      type: 'exponential',
+      delay: 1000,
+    },
+    removeOnComplete: 1000,
+    removeOnFail: 5000,
+  },
+});
+```
+
+### With Custom Prefix
+
+```typescript
+const queue = new Queue('myQueue', {
+  connection: {
+    host: 'localhost',
+    port: 6379,
+  },
+  prefix: 'myapp',  // Keys will be: myapp:myQueue:*
+});
+```
+
+### With Event Stream Limits
+
+```typescript
+const queue = new Queue('myQueue', {
+  connection: {
+    host: 'localhost',
+    port: 6379,
+  },
+  streams: {
+    events: {
+      maxLen: 1000,  // Keep only 1000 events
+    },
+  },
+});
+```
+
+### Read-Only Queue
+
+```typescript
+const queue = new Queue('myQueue', {
+  connection: {
+    host: 'localhost',
+    port: 6379,
+  },
+  skipMetasUpdate: true,  // Don't update queue metadata
+});
+```
+
+### With Shared Connection
+
+```typescript
+import IORedis from 'ioredis';
+
+const connection = new IORedis({
+  host: 'localhost',
+  port: 6379,
+  maxRetriesPerRequest: null,
+});
+
+const queue1 = new Queue('queue1', { connection });
+const queue2 = new Queue('queue2', { connection });
+```
+
+## Related Interfaces
+
+- [WorkerOptions](/api/interfaces/worker-options) - Configuration for Workers
+- [JobOptions](/api/interfaces/job-options) - Configuration for individual jobs
+- [ConnectionOptions](/api/interfaces/connection-options) - Redis connection configuration

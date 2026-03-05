@@ -1,0 +1,78 @@
+---
+title: "Throttle Jobs"
+description: "Prevent duplicate jobs from being added by using job IDs"
+---
+
+Sometimes, you may want to enqueue a job in reaction to a frequently occurring event, without running that job for every event. For example, you may want to send an email to a user when they update their profile, but you don't want to send an email for every single update if they make many changes in rapid succession.
+
+## Using Job IDs for Throttling
+
+You can achieve this by setting an identical `jobId` so that **identical jobs are considered duplicates and not added to the queue**.
+
+When you use this option, it is up to you to ensure the `jobId` is unique for different types of work:
+
+```typescript
+import { Job, Queue, Worker } from 'bullmq';
+
+const myQueue = new Queue('Paint');
+
+const worker = new Worker('Paint', async (job: Job) => {
+  console.log('Do something with job');
+  return 'some value';
+});
+
+worker.on('completed', (job: Job, returnvalue: any) => {
+  console.log('worker done painting', new Date());
+});
+
+worker.on('failed', (job: Job, error: Error) => {
+  console.error('worker fail painting', job, error, new Date());
+});
+
+// Add only one job that will be delayed at least 1 second.
+myQueue.add('house', { color: 'white' }, { delay: 1000, jobId: 'house' });
+myQueue.add('house', { color: 'white' }, { delay: 1000, jobId: 'house' });
+myQueue.add('house', { color: 'white' }, { delay: 1000, jobId: 'house' });
+myQueue.add('house', { color: 'white' }, { delay: 1000, jobId: 'house' });
+myQueue.add('house', { color: 'white' }, { delay: 1000, jobId: 'house' });
+myQueue.add('house', { color: 'white' }, { delay: 1000, jobId: 'house' });
+myQueue.add('house', { color: 'white' }, { delay: 1000, jobId: 'house' });
+```
+
+In this example, only the first job will be added to the queue. All subsequent attempts to add a job with the same `jobId` will be ignored while a job with that ID exists in the queue.
+
+<Warning>
+Be careful if using `removeOnComplete`/`removeOnFailed` options, since a removed job will not count as existing and a new job with the same job ID could be added to the queue without being detected as a duplicate.
+</Warning>
+
+## Use Cases
+
+<CardGroup cols={2}>
+  <Card title="Profile Updates" icon="user">
+    Send a single notification email after profile updates, not for each field change
+  </Card>
+  <Card title="Search Indexing" icon="magnifying-glass">
+    Index a document once after multiple rapid edits
+  </Card>
+  <Card title="Cache Invalidation" icon="trash">
+    Clear cache once for multiple related changes
+  </Card>
+  <Card title="Webhook Delivery" icon="webhook">
+    Send a single webhook for batched events
+  </Card>
+</CardGroup>
+
+## Alternative: Deduplication
+
+For more sophisticated throttling and deduplication patterns, see the [Deduplication guide](/jobs/deduplication) which provides built-in throttle and debounce modes.
+
+## Related Resources
+
+<CardGroup cols={2}>
+  <Card title="Job IDs" icon="fingerprint" href="/jobs/job-ids">
+    Learn more about custom job identifiers
+  </Card>
+  <Card title="Deduplication" icon="clone" href="/jobs/deduplication">
+    Advanced deduplication strategies
+  </Card>
+</CardGroup>

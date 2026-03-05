@@ -1,0 +1,266 @@
+---
+title: 'Global Concurrency'
+description: 'Control the maximum number of jobs processed in parallel across all workers'
+---
+
+Global concurrency is a queue-level setting that determines the maximum number of jobs that can be processed simultaneously across **all** worker instances connected to the queue.
+
+## Setting Global Concurrency
+
+Use the `setGlobalConcurrency` method to set a concurrency limit:
+
+### Method Signature
+
+```typescript
+async setGlobalConcurrency(concurrency: number): Promise<void>
+```
+
+<ParamField path="concurrency" type="number" required>
+  Maximum number of simultaneous jobs that all workers can handle. For instance, setting this to 1 ensures that no more than one job is processed at any given time across all workers. If this limit is not defined, there will be no restriction on concurrent jobs.
+</ParamField>
+
+### Example
+
+<CodeGroup>
+```typescript TypeScript
+import { Queue } from 'bullmq';
+
+const queue = new Queue('tasks');
+
+// Limit to 4 concurrent jobs across all workers
+await queue.setGlobalConcurrency(4);
+```
+
+```javascript JavaScript
+const { Queue } = require('bullmq');
+
+const queue = new Queue('tasks');
+
+// Limit to 4 concurrent jobs across all workers
+await queue.setGlobalConcurrency(4);
+```
+</CodeGroup>
+
+## Getting Global Concurrency
+
+Retrieve the current global concurrency setting:
+
+<CodeGroup>
+```typescript TypeScript
+const concurrency = await queue.getGlobalConcurrency();
+console.log(`Global concurrency: ${concurrency}`);
+```
+
+```javascript JavaScript
+const concurrency = await queue.getGlobalConcurrency();
+console.log(`Global concurrency: ${concurrency}`);
+```
+</CodeGroup>
+
+## Removing Global Concurrency
+
+Remove the global concurrency limit, allowing unlimited concurrent jobs:
+
+<CodeGroup>
+```typescript TypeScript
+await queue.removeGlobalConcurrency();
+console.log('Global concurrency limit removed');
+```
+
+```javascript JavaScript
+await queue.removeGlobalConcurrency();
+console.log('Global concurrency limit removed');
+```
+</CodeGroup>
+
+## How It Works
+
+Global concurrency works differently from worker-level concurrency:
+
+### Worker-Level Concurrency
+
+Controls how many jobs a **single worker** can process simultaneously:
+
+```typescript
+import { Worker } from 'bullmq';
+
+const worker = new Worker(
+  'tasks',
+  async job => {
+    // Process job
+  },
+  {
+    concurrency: 5  // This worker processes max 5 jobs at once
+  }
+);
+```
+
+### Global Concurrency
+
+Controls how many jobs **all workers combined** can process simultaneously:
+
+```typescript
+import { Queue } from 'bullmq';
+
+const queue = new Queue('tasks');
+
+// All workers combined process max 10 jobs at once
+await queue.setGlobalConcurrency(10);
+```
+
+<Info>
+  Worker-level concurrency does **not** override global concurrency. The global limit is always respected, even if individual workers could process more jobs.
+</Info>
+
+## Practical Examples
+
+### Example 1: Rate-Limited API
+
+If your jobs call an external API with strict rate limits:
+
+```typescript
+import { Queue, Worker } from 'bullmq';
+
+const queue = new Queue('api-calls');
+
+// API allows max 5 concurrent requests
+await queue.setGlobalConcurrency(5);
+
+// Even with multiple workers, only 5 jobs run concurrently
+const worker1 = new Worker('api-calls', processJob, { concurrency: 10 });
+const worker2 = new Worker('api-calls', processJob, { concurrency: 10 });
+// Both workers combined will only process 5 jobs at once
+
+async function processJob(job: Job) {
+  // Call external API
+  const response = await fetch('https://api.example.com/data');
+  return response.json();
+}
+```
+
+### Example 2: Database Connection Pool
+
+Limit concurrent database operations to match your connection pool size:
+
+```typescript
+import { Queue, Worker } from 'bullmq';
+
+const queue = new Queue('db-operations');
+
+// Database pool has 20 connections
+await queue.setGlobalConcurrency(20);
+
+const worker = new Worker('db-operations', async job => {
+  // Perform database operation
+  await db.query('INSERT INTO ...');
+});
+```
+
+### Example 3: Resource-Intensive Jobs
+
+Prevent overloading your infrastructure:
+
+```typescript
+import { Queue, Worker } from 'bullmq';
+import os from 'os';
+
+const queue = new Queue('video-processing');
+
+// Limit to number of CPU cores
+const cpuCount = os.cpus().length;
+await queue.setGlobalConcurrency(cpuCount);
+
+const worker = new Worker('video-processing', async job => {
+  // CPU-intensive video processing
+  await processVideo(job.data.videoPath);
+});
+```
+
+### Example 4: Dynamic Concurrency
+
+Adjust concurrency based on system load:
+
+```typescript
+import { Queue } from 'bullmq';
+import os from 'os';
+
+const queue = new Queue('tasks');
+
+// Adjust concurrency every minute based on CPU usage
+setInterval(async () => {
+  const cpus = os.cpus();
+  const avgLoad = os.loadavg()[0];
+  const cpuCount = cpus.length;
+  
+  // If load is high, reduce concurrency
+  if (avgLoad > cpuCount * 0.8) {
+    await queue.setGlobalConcurrency(Math.max(1, Math.floor(cpuCount / 2)));
+    console.log('High load - reduced concurrency');
+  } else {
+    await queue.setGlobalConcurrency(cpuCount);
+    console.log('Normal load - standard concurrency');
+  }
+}, 60000);
+```
+
+## Combining Global and Worker Concurrency
+
+When using both global and worker-level concurrency:
+
+```typescript
+import { Queue, Worker } from 'bullmq';
+
+const queue = new Queue('tasks');
+
+// Global limit: 10 jobs across all workers
+await queue.setGlobalConcurrency(10);
+
+// Worker 1: can process up to 5 jobs
+const worker1 = new Worker('tasks', processJob, { concurrency: 5 });
+
+// Worker 2: can process up to 5 jobs
+const worker2 = new Worker('tasks', processJob, { concurrency: 5 });
+
+// Result: Even though workers could theoretically handle 10 jobs total,
+// the global limit of 10 is respected. If you had 3+ workers with concurrency 5,
+// they would still be limited to 10 total concurrent jobs.
+```
+
+## Use Cases
+
+### When to Use Global Concurrency
+
+- External API rate limits
+- Database connection pool limits
+- Shared resource constraints (memory, CPU, network)
+- Third-party service quotas
+- License limitations (e.g., max concurrent users)
+
+### When NOT to Use Global Concurrency
+
+- Jobs are completely independent with no shared resources
+- You want maximum throughput
+- Each worker should control its own concurrency
+
+## Monitoring
+
+Check the current state:
+
+```typescript
+import { Queue } from 'bullmq';
+
+const queue = new Queue('tasks');
+
+const meta = await queue.getMeta();
+console.log('Global concurrency:', meta.concurrency);
+console.log('Active jobs:', await queue.getActiveCount());
+```
+
+## Related
+
+- [Global Rate Limit](/queues/global-rate-limit)
+- [Metadata](/queues/metadata)
+- [Queue API Reference](https://api.docs.bullmq.io/classes/v5.Queue.html)
+- [Set Global Concurrency API Reference](https://api.docs.bullmq.io/classes/v5.Queue.html#setglobalconcurrency)
+- [Get Global Concurrency API Reference](https://api.docs.bullmq.io/classes/v5.Queue.html#getglobalconcurrency)
+- [Remove Global Concurrency API Reference](https://api.docs.bullmq.io/classes/v5.Queue.html#removeglobalconcurrency)

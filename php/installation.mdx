@@ -1,0 +1,222 @@
+---
+title: Installation
+description: How to install BullMQ for PHP
+---
+
+## Installation Options
+
+There are two ways to install BullMQ PHP:
+
+### Option 1: Download Release (Recommended)
+
+Download the latest release from the [releases page](https://github.com/taskforcesh/bullmq/releases) (look for `bullmq-php-X.X.X.zip`), extract it to your project, and configure Composer:
+
+```json
+{
+  "repositories": [
+    {
+      "type": "path",
+      "url": "./bullmq-php-X.X.X"
+    }
+  ],
+  "require": {
+    "taskforcesh/bullmq-php": "*"
+  }
+}
+```
+
+Then run:
+
+```bash
+composer install
+```
+
+### Option 2: Install from GitHub (Development)
+
+For development or if you want the latest changes, install directly from the repository:
+
+```json
+{
+  "repositories": [
+    {
+      "type": "vcs",
+      "url": "https://github.com/taskforcesh/bullmq"
+    }
+  ],
+  "require": {
+    "taskforcesh/bullmq-php": "dev-master"
+  },
+  "minimum-stability": "dev",
+  "prefer-stable": true
+}
+```
+
+<Warning>
+  Installing from VCS requires building the Lua scripts. After `composer install`, run from the monorepo root:
+  
+  ```bash
+  yarn install && yarn build && yarn copy:lua:php
+  ```
+</Warning>
+
+## Requirements
+
+- **PHP**: 8.1 or higher
+- **Redis**: 5.0 or higher (6.2+ recommended for best performance)
+- **Composer**: For package management
+
+## Dependencies
+
+The package automatically installs the following dependencies:
+
+- **predis/predis** (^2.0) - Redis client for PHP
+- **ramsey/uuid** (^4.7) - UUID generation for job IDs
+- **rybakit/msgpack** (^0.9) - MessagePack serialization for Lua scripts
+
+## Verify Installation
+
+Create a simple test file:
+
+```php
+<?php
+
+require_once __DIR__ . '/vendor/autoload.php';
+
+use BullMQ\Queue;
+
+$queue = new Queue('test-queue');
+echo "BullMQ PHP installed successfully!\n";
+```
+
+Run it:
+
+```bash
+php test.php
+```
+
+## Redis Setup
+
+BullMQ requires a Redis server:
+
+### Run Redis Locally
+
+```bash
+# Using Docker
+docker run -d -p 6379:6379 redis:latest
+
+# Or install Redis directly
+# On Ubuntu/Debian:
+sudo apt-get install redis-server
+
+# On macOS:
+brew install redis
+```
+
+### Use a Managed Redis Service
+
+For production, consider using a managed Redis service:
+
+- [Redis Cloud](https://redis.com/cloud/)
+- [AWS ElastiCache](https://aws.amazon.com/elasticache/)
+- [Google Cloud Memorystore](https://cloud.google.com/memorystore)
+- [Azure Cache for Redis](https://azure.microsoft.com/en-us/services/cache/)
+
+## Connection Configuration
+
+You can configure Redis connections in several ways:
+
+### Using Connection Array
+
+```php
+use BullMQ\Queue;
+
+$queue = new Queue('my-queue', [
+    'connection' => [
+        'host' => 'localhost',
+        'port' => 6379,
+        'password' => null,
+        'database' => 0,
+    ],
+]);
+```
+
+### Using Redis URI
+
+```php
+$queue = new Queue('my-queue', [
+    'connection' => 'redis://user:password@localhost:6379/0',
+]);
+```
+
+### Sharing a Connection
+
+```php
+use BullMQ\RedisConnection;
+
+$connection = new RedisConnection([
+    'host' => 'localhost',
+    'port' => 6379,
+]);
+
+$queue1 = new Queue('queue-1', ['connection' => $connection]);
+$queue2 = new Queue('queue-2', ['connection' => $connection]);
+```
+
+## Common Issues
+
+### Redis Connection Errors
+
+If you can't connect to Redis:
+
+1. Verify Redis is running: `redis-cli ping` (should return `PONG`)
+2. Check your connection string has the correct host, port, and credentials
+3. Ensure your firewall allows connections to the Redis port (default: 6379)
+4. For remote Redis, verify network connectivity and credentials
+
+### Composer Errors
+
+If you encounter Composer errors:
+
+1. Ensure you're running PHP 8.1 or higher: `php -v`
+2. Update Composer: `composer self-update`
+3. Clear Composer cache: `composer clear-cache`
+4. Try running with verbose output: `composer install -vvv`
+
+### Missing Lua Scripts
+
+If you get errors about missing Lua scripts when installing from GitHub:
+
+1. Ensure you have Node.js and Yarn installed
+2. Run the build commands from the monorepo root:
+   ```bash
+   yarn install
+   yarn build
+   yarn copy:lua:php
+   ```
+
+## Development Setup
+
+For contributing or development:
+
+```bash
+# Clone the repository
+git clone https://github.com/taskforcesh/bullmq.git
+cd bullmq/php
+
+# Install dependencies
+composer install
+
+# Build Lua scripts (from monorepo root)
+cd ..
+yarn install && yarn build && yarn copy:lua:php
+
+# Run tests
+cd php
+composer test
+```
+
+## Next Steps
+
+<Card title="Usage Guide" icon="code" href="/php/usage">
+  Learn how to add jobs and manage queues
+</Card>

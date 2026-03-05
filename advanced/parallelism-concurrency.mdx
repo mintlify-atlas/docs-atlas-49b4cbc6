@@ -1,0 +1,397 @@
+---
+title: 'Parallelism and Concurrency'
+description: 'Understand the difference between parallelism and concurrency in BullMQ'
+---
+
+Understanding parallelism and concurrency is crucial for maximizing throughput and efficiently processing jobs in BullMQ. While these terms are often used interchangeably, they have distinct meanings that affect how you configure your workers.
+
+## Parallelism
+
+Parallelism means that two or more tasks run simultaneously on different CPU cores or machines. True parallel execution happens when:
+
+- You have multiple CPU cores available
+- Multiple machines are processing jobs
+- Tasks are genuinely executing at the exact same time
+
+```typescript
+import { Worker } from 'bullmq';
+import cluster from 'cluster';
+import os from 'os';
+
+if (cluster.isPrimary) {
+  // Fork workers equal to CPU count
+  const numCPUs = os.cpus().length;
+  console.log(`Starting ${numCPUs} worker processes`);
+  
+  for (let i = 0; i < numCPUs; i++) {
+    cluster.fork();
+  }
+} else {
+  // Each process runs a worker
+  const worker = new Worker('tasks', async job => {
+    // CPU-intensive work runs in parallel across processes
+    return await cpuIntensiveTask(job.data);
+  });
+}
+```
+
+### When Parallelism Helps
+
+Parallelism provides maximum performance when:
+
+- **Jobs are CPU-intensive**: Calculations, data processing, image manipulation
+- **Little to no I/O waiting**: Minimal network calls, database queries, or file operations
+- **Multiple cores available**: Each parallel task gets its own CPU core
+
+However, most software is continually blocked by slow I/O operations like:
+- Reading from the network
+- Writing to disk
+- Sending data via peripherals
+- Database queries
+- API calls
+
+This is where concurrency becomes more important.
+
+## Concurrency
+
+Concurrency means multiple tasks make progress by sharing CPU time through rapid context switching. Tasks give the **impression** of running in parallel, but they're actually taking turns.
+
+```typescript
+import { Worker } from 'bullmq';
+
+const worker = new Worker('tasks', async job => {
+  // While waiting for API response, worker can process other jobs
+  const response = await fetch(job.data.url);
+  
+  // While waiting for database write, worker can process other jobs
+  await database.save(response.data);
+  
+  return response.data;
+}, {
+  concurrency: 50, // Process up to 50 jobs concurrently
+});
+```
+
+### Node.js Event Loop
+
+Node.js excels at concurrency through its single-threaded event loop:
+
+1. A job makes an async I/O call (e.g., database query)
+2. Instead of blocking, Node.js moves to the next task
+3. When the I/O completes, Node.js returns to finish the original task
+4. This gives the effect of parallel execution without the overhead
+
+```typescript
+// This worker can handle 100 concurrent jobs efficiently
+const worker = new Worker('api-calls', async job => {
+  // Non-blocking async operations
+  const user = await db.findUser(job.data.userId);
+  const profile = await api.getProfile(user.email);
+  await db.updateUser(user.id, profile);
+  
+  return profile;
+}, {
+  concurrency: 100, // Efficient for I/O-bound work
+});
+```
+
+<Info>
+  Concurrency is efficient because Node.js uses CPU time to execute code instead of waiting idle for async calls to complete.
+</Info>
+
+## BullMQ Concurrency
+
+BullMQ's concurrency setting controls how many jobs a single worker processes concurrently:
+
+```typescript
+import { Worker } from 'bullmq';
+
+const worker = new Worker('tasks', async job => {
+  // Process job
+  return await processJob(job);
+}, {
+  concurrency: 10, // Process 10 jobs concurrently
+});
+```
+
+### I/O-Heavy Jobs
+
+For jobs with lots of I/O operations (API calls, database queries), **increase concurrency**:
+
+```typescript
+const ioWorker = new Worker('api-tasks', async job => {
+  const data1 = await api.fetchData(job.data.url1);
+  const data2 = await api.fetchData(job.data.url2);
+  await db.save({ data1, data2 });
+  return { saved: true };
+}, {
+  concurrency: 100, // High concurrency for I/O-bound work
+});
+```
+
+**Recommended concurrency for I/O-heavy jobs**: 100-300
+
+### CPU-Intensive Jobs
+
+For CPU-intensive jobs without I/O, **keep concurrency low**:
+
+```typescript
+const cpuWorker = new Worker('heavy-calc', async job => {
+  // Pure CPU work - no I/O
+  return calculatePrimes(job.data.max);
+}, {
+  concurrency: 1, // Low concurrency for CPU-bound work
+});
+```
+
+<Warning>
+  High concurrency with CPU-intensive jobs adds overhead without benefit. Use [Sandboxed Processors](/workers/sandboxed-processors) instead for true parallelism.
+</Warning>
+
+**Recommended concurrency for CPU-intensive jobs**: 1-2
+
+## Threading in Node.js
+
+Node.js supports worker threads, but they're heavy:
+
+- Each thread requires a complete V8 VM
+- Memory overhead of several dozen megabytes per thread
+- Similar memory consumption to separate OS processes
+
+```typescript
+import { Worker } from 'bullmq';
+import path from 'path';
+
+// Sandboxed processor uses worker threads
+const worker = new Worker(
+  'cpu-intensive',
+  path.join(__dirname, 'processor.js'),
+  {
+    concurrency: 4, // Match CPU core count
+  },
+);
+```
+
+See [Sandboxed Processors](/workers/sandboxed-processors) for using worker threads with BullMQ.
+
+## Best Practices
+
+### Strategy 1: Worker Concurrency
+
+Increase the concurrency factor for I/O-heavy jobs:
+
+```typescript
+const worker = new Worker('io-tasks', processor, {
+  concurrency: 50,
+});
+```
+
+**When to use:**
+- Jobs perform API calls
+- Jobs query databases
+- Jobs read/write files
+- Jobs have significant wait times
+
+**Typical range:** 50-300
+
+### Strategy 2: Multiple Workers
+
+Run multiple worker instances for parallel processing:
+
+```typescript
+// worker.js - Run this multiple times
+import { Worker } from 'bullmq';
+
+const worker = new Worker('tasks', processor, {
+  concurrency: 10,
+});
+```
+
+Deploy across:
+- **Multiple processes** on the same machine
+- **Multiple machines** for horizontal scaling
+
+**When to use:**
+- CPU-intensive jobs
+- Need for high availability
+- Scaling beyond a single machine
+
+### Strategy 3: Combine Both
+
+For optimal performance, combine strategies:
+
+```typescript
+// Production setup:
+// 4 servers × 4 processes × concurrency 10 = 160 concurrent jobs
+
+import cluster from 'cluster';
+import os from 'os';
+
+if (cluster.isPrimary) {
+  for (let i = 0; i < 4; i++) {
+    cluster.fork();
+  }
+} else {
+  const worker = new Worker('tasks', processor, {
+    concurrency: 10,
+  });
+}
+```
+
+## Decision Matrix
+
+<CardGroup cols={2}>
+  <Card title="I/O-Bound Jobs" icon="cloud">
+    - **Concurrency**: High (100-300)
+    - **Workers**: 1-2 per machine
+    - **Example**: API calls, database queries
+  </Card>
+  <Card title="CPU-Bound Jobs" icon="microchip">
+    - **Concurrency**: Low (1-2)
+    - **Workers**: Match CPU cores
+    - **Example**: Image processing, calculations
+  </Card>
+  <Card title="Mixed Workload" icon="layer-group">
+    - **Concurrency**: Medium (10-20)
+    - **Workers**: 2-4 per machine
+    - **Example**: Data processing with API calls
+  </Card>
+  <Card title="High Availability" icon="shield-check">
+    - **Concurrency**: Based on job type
+    - **Workers**: Multiple machines
+    - **Example**: Production systems
+  </Card>
+</CardGroup>
+
+## Performance Tuning
+
+### Start Conservative
+
+Begin with low values and increase based on monitoring:
+
+```typescript
+const worker = new Worker('tasks', processor, {
+  concurrency: 5, // Start here
+});
+
+// Monitor and adjust
+setInterval(() => {
+  console.log('Active:', worker.processing);
+}, 5000);
+```
+
+### Monitor Resource Usage
+
+Watch for bottlenecks:
+
+```typescript
+import os from 'os';
+import { Worker } from 'bullmq';
+
+const worker = new Worker('tasks', processor, {
+  concurrency: 50,
+});
+
+setInterval(() => {
+  const cpuLoad = os.loadavg()[0];
+  const memUsage = process.memoryUsage();
+  
+  console.log('CPU Load:', cpuLoad);
+  console.log('Memory:', Math.round(memUsage.heapUsed / 1024 / 1024), 'MB');
+  
+  // Adjust concurrency if needed
+  if (cpuLoad > 0.8) {
+    worker.concurrency = Math.max(10, worker.concurrency - 10);
+  }
+}, 60000);
+```
+
+### Adjust Lock Duration
+
+Higher concurrency may need longer locks:
+
+```typescript
+const worker = new Worker('tasks', processor, {
+  concurrency: 100,
+  lockDuration: 60000, // 60 seconds for high concurrency
+});
+```
+
+## Common Pitfalls
+
+<Warning>
+  **High concurrency with CPU-bound jobs**: This adds overhead without benefit and can cause stalled jobs. Use sandboxing instead.
+</Warning>
+
+<Warning>
+  **Too many workers**: More workers than CPU cores won't help CPU-bound jobs and wastes memory.
+</Warning>
+
+<Warning>
+  **Ignoring I/O opportunities**: Jobs with I/O operations benefit from higher concurrency. Don't default to `concurrency: 1`.
+</Warning>
+
+## Real-World Examples
+
+### Example 1: Email Service (I/O-Bound)
+
+```typescript
+const emailWorker = new Worker('emails', async job => {
+  await emailProvider.send(job.data);
+}, {
+  concurrency: 200, // High - emails involve network I/O
+});
+```
+
+### Example 2: Image Processing (CPU-Bound)
+
+```typescript
+import path from 'path';
+
+const imageWorker = new Worker(
+  'images',
+  path.join(__dirname, 'image-processor.js'),
+  {
+    concurrency: os.cpus().length, // Match CPU cores
+  },
+);
+```
+
+### Example 3: Mixed Workload
+
+```typescript
+const mixedWorker = new Worker('data-pipeline', async job => {
+  // I/O: Fetch from API
+  const data = await api.fetch(job.data.url);
+  
+  // CPU: Transform data
+  const transformed = heavyTransform(data);
+  
+  // I/O: Save to database
+  await db.save(transformed);
+}, {
+  concurrency: 20, // Medium - mixed workload
+});
+```
+
+## Related Topics
+
+<CardGroup cols={2}>
+  <Card title="Concurrency" icon="layer-group" href="/workers/concurrency">
+    Configure worker concurrency settings
+  </Card>
+  <Card title="Sandboxed Processors" icon="box" href="/workers/sandboxed-processors">
+    Isolate CPU-intensive work in separate processes
+  </Card>
+  <Card title="Stalled Jobs" icon="clock" href="/workers/stalled-jobs">
+    Understand and prevent stalled jobs
+  </Card>
+  <Card title="Rate Limiting" icon="gauge" href="/advanced/rate-limiting">
+    Control job processing rate
+  </Card>
+</CardGroup>
+
+## API Reference
+
+- [Worker API Reference](https://api.docs.bullmq.io/classes/v5.Worker.html)
+- [WorkerOptions.concurrency](https://api.docs.bullmq.io/interfaces/v5.WorkerOptions.html#concurrency)

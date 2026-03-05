@@ -1,0 +1,226 @@
+---
+title: "Job Data"
+description: "Store and update custom data in your jobs"
+---
+
+## Overview
+
+Every job can have its own custom data stored in the `data` attribute. This data is serialized to JSON and stored in Redis.
+
+```typescript
+import { Queue } from 'bullmq';
+
+const myQueue = new Queue('paint');
+
+const job = await myQueue.add('wall', { color: 'red' });
+
+console.log(job.data); // { color: 'red' }
+```
+
+<CodeGroup>
+
+```typescript TypeScript
+import { Queue } from 'bullmq';
+
+const myQueue = new Queue('paint');
+
+const job = await myQueue.add('wall', { color: 'red' });
+
+job.data; // { color: 'red' }
+```
+
+```python Python
+from bullmq import Queue
+
+queue = Queue('paint')
+
+job = await queue.add('wall', {'color': 'red'})
+
+job.data # { color: 'red' }
+```
+
+</CodeGroup>
+
+## Data Structure
+
+From `src/classes/job.ts:206`:
+
+```typescript
+export class Job<
+  DataType = any,
+  ReturnType = any,
+  NameType extends string = string,
+> {
+  constructor(
+    protected queue: MinimalQueue,
+    /**
+     * The name of the Job
+     */
+    public name: NameType,
+
+    /**
+     * The payload for this job.
+     */
+    public data: DataType,
+
+    /**
+     * The options object for this job.
+     */
+    public opts: JobsOptions = {},
+    public id?: string,
+  ) {
+    // ...
+  }
+}
+```
+
+The `data` parameter accepts any type, which will be serialized to JSON when stored in Redis.
+
+## Update Job Data
+
+You can update a job's data after creation using the `updateData` method:
+
+<CodeGroup>
+
+```typescript TypeScript
+import { Job, Queue } from 'bullmq';
+
+const queue = new Queue('paint');
+const job = await Job.create(queue, 'wall', { color: 'red' });
+
+await job.updateData({
+  color: 'blue',
+});
+
+console.log(job.data); // { color: 'blue' }
+```
+
+```python Python
+from bullmq import Queue
+
+queue = Queue('paint')
+
+job = await queue.add('wall', {'color': 'red'})
+
+await job.updateData({'color': 'blue'})
+print(job.data) # { color: 'blue' }
+```
+
+</CodeGroup>
+
+From `src/classes/job.ts:599`:
+
+```typescript
+/**
+ * Updates a job's data
+ *
+ * @param data - the data that will replace the current jobs data.
+ */
+updateData(data: DataType): Promise<void> {
+  this.data = data;
+
+  return this.scripts.updateData<DataType, ReturnType, NameType>(this, data);
+}
+```
+
+## Data Serialization
+
+Job data is stored as a JSON string in Redis. From `src/classes/job.ts:522`:
+
+```typescript
+asJSON(): JobJson {
+  return removeUndefinedFields<JobJson>({
+    id: this.id,
+    name: this.name,
+    data: JSON.stringify(typeof this.data === 'undefined' ? {} : this.data),
+    // ...
+  });
+}
+```
+
+<Warning>
+Ensure your job data is JSON-serializable. Objects with circular references, functions, or other non-serializable values will cause errors.
+</Warning>
+
+## Size Limits
+
+You can set a size limit for job data to prevent extremely large payloads:
+
+```typescript
+const job = await myQueue.add(
+  'wall',
+  { color: 'red', image: largeImageData },
+  {
+    sizeLimit: 1024 * 1024, // 1MB limit
+  }
+);
+```
+
+From `src/classes/job.ts:1557`:
+
+```typescript
+const exceedLimit =
+  this.opts.sizeLimit &&
+  lengthInUtf8Bytes(jobData.data) > this.opts.sizeLimit;
+
+if (exceedLimit) {
+  throw new Error(
+    `The size of job ${this.name} exceeds the limit ${this.opts.sizeLimit} bytes`,
+  );
+}
+```
+
+## Best Practices
+
+<AccordionGroup>
+
+<Accordion title="Keep data minimal">
+  Store only the data needed to process the job. Large payloads increase memory usage and network transfer costs.
+</Accordion>
+
+<Accordion title="Use references for large data">
+  Instead of storing large files directly, store references (URLs, S3 keys) and fetch the data during processing.
+  
+  ```typescript
+  // Good
+  await queue.add('processImage', { imageUrl: 's3://bucket/image.jpg' });
+  
+  // Avoid
+  await queue.add('processImage', { imageBase64: '...' }); // Large payload
+  ```
+</Accordion>
+
+<Accordion title="Validate data types">
+  Use TypeScript generics to ensure type safety:
+  
+  ```typescript
+  interface PaintJobData {
+    color: string;
+    surface: 'wall' | 'ceiling' | 'floor';
+  }
+  
+  const queue = new Queue<PaintJobData>('paint');
+  
+  // TypeScript will catch type errors
+  await queue.add('wall', { color: 'red', surface: 'wall' });
+  ```
+</Accordion>
+
+</AccordionGroup>
+
+## Related Options
+
+From `src/interfaces/base-job-options.ts:75`:
+
+```typescript
+interface DefaultJobOptions {
+  /**
+   * Limits the size in bytes of the job's data payload (as a JSON serialized string).
+   */
+  sizeLimit?: number;
+}
+```
+
+<Card title="API Reference" icon="code" href="https://api.docs.bullmq.io/classes/v5.Job.html#updatedata">
+  View the Update Data API Reference
+</Card>

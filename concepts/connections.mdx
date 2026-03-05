@@ -1,0 +1,317 @@
+---
+title: 'Connections'
+description: 'Learn how to configure and manage Redis connections in BullMQ'
+---
+
+## Overview
+
+Every BullMQ class (Queue, Worker, QueueEvents) requires a connection to Redis. BullMQ uses [ioredis](https://github.com/luin/ioredis) under the hood, and connection options are passed directly to the ioredis constructor.
+
+<Note>
+If no connection options are provided, BullMQ defaults to `localhost:6379`.
+</Note>
+
+## Connection Options
+
+BullMQ accepts connection configuration through the `ConnectionOptions` interface:
+
+```typescript
+interface ConnectionOptions {
+  host?: string;          // Default: '127.0.0.1'
+  port?: number;          // Default: 6379
+  username?: string;
+  password?: string;
+  db?: number;            // Database index
+  maxRetriesPerRequest?: number | null;
+  retryStrategy?: (times: number) => number;
+  url?: string;           // Redis URL (e.g., redis://localhost:6379)
+  // ... other ioredis options
+}
+```
+
+### Basic Connection
+
+<CodeGroup>
+```typescript Basic
+import { Queue, Worker } from 'bullmq';
+
+const queue = new Queue('myqueue', {
+  connection: {
+    host: 'localhost',
+    port: 6379,
+  },
+});
+```
+
+```typescript URL Format
+import { Queue } from 'bullmq';
+
+const queue = new Queue('myqueue', {
+  connection: {
+    url: 'redis://localhost:6379',
+  },
+});
+```
+
+```typescript With Authentication
+import { Queue } from 'bullmq';
+
+const queue = new Queue('myqueue', {
+  connection: {
+    host: 'myredis.example.com',
+    port: 6379,
+    username: 'default',
+    password: 'my-secret-password',
+  },
+});
+```
+</CodeGroup>
+
+## Reusing Connections
+
+You can share an existing ioredis instance across multiple Queue instances to reduce connection overhead:
+
+```typescript
+import { Queue } from 'bullmq';
+import IORedis from 'ioredis';
+
+const connection = new IORedis({
+  host: 'localhost',
+  port: 6379,
+  maxRetriesPerRequest: null,
+});
+
+// Reuse the connection
+const queue1 = new Queue('queue1', { connection });
+const queue2 = new Queue('queue2', { connection });
+```
+
+<Warning>
+Workers and QueueEvents create additional blocking connections internally, even when reusing connections.
+</Warning>
+
+## Connection Behavior
+
+### Queue vs Worker Connections
+
+The connection requirements differ between producers and consumers:
+
+<Tabs>
+  <Tab title="Queue (Producer)">
+    **Use Case**: Adding jobs via HTTP endpoints or API calls
+
+    ```typescript
+    const queue = new Queue('myqueue', {
+      connection: {
+        host: 'localhost',
+        port: 6379,
+        // Keep default maxRetriesPerRequest (20)
+        // Fast failure for user-facing operations
+      },
+    });
+    ```
+
+    For producers, use the default `maxRetriesPerRequest` setting so operations fail quickly if Redis is unavailable.
+  </Tab>
+
+  <Tab title="Worker (Consumer)">
+    **Use Case**: Background job processing
+
+    ```typescript
+    import IORedis from 'ioredis';
+
+    const connection = new IORedis({
+      host: 'localhost',
+      port: 6379,
+      maxRetriesPerRequest: null, // Retry indefinitely
+    });
+
+    const worker = new Worker('myqueue', async (job) => {
+      // Process job
+    }, { connection });
+    ```
+
+    Workers should set `maxRetriesPerRequest: null` to keep retrying forever during temporary Redis outages.
+  </Tab>
+</Tabs>
+
+## Important Configuration
+
+### maxRetriesPerRequest
+
+This setting controls how many times ioredis retries a failed command:
+
+- **`null`** (recommended for Workers): Retry indefinitely
+- **Number** (recommended for Queues): Retry N times before throwing an error
+
+<Warning>
+BullMQ will throw an exception if `maxRetriesPerRequest` is not `null` when passing a manual Redis client to Worker instances.
+</Warning>
+
+### Redis Server Configuration
+
+<Warning>
+Ensure your Redis instance has the following setting:
+
+```
+maxmemory-policy=noeviction
+```
+
+This prevents automatic key eviction which would cause unexpected errors in BullMQ.
+</Warning>
+
+### Key Prefix
+
+<Warning>
+Do **not** use ioredis's `keyPrefix` option. It is incompatible with BullMQ.
+
+Instead, use BullMQ's built-in `prefix` option:
+
+```typescript
+const queue = new Queue('myqueue', {
+  prefix: 'myapp',  // Use this ✓
+  connection: {
+    // Do NOT use keyPrefix here ✗
+  },
+});
+```
+</Warning>
+
+## Advanced Connection Options
+
+### Retry Strategy
+
+Customize the retry backoff behavior:
+
+```typescript
+const queue = new Queue('myqueue', {
+  connection: {
+    host: 'localhost',
+    port: 6379,
+    retryStrategy(times: number) {
+      // Exponential backoff: 1s, 2s, 4s, 8s, ..., max 20s
+      return Math.min(times * 1000, 20000);
+    },
+  },
+});
+```
+
+### Redis Cluster
+
+Connect to a Redis cluster:
+
+```typescript
+import { Cluster } from 'ioredis';
+import { Queue } from 'bullmq';
+
+const cluster = new Cluster([
+  { host: 'redis-node-1', port: 6379 },
+  { host: 'redis-node-2', port: 6379 },
+  { host: 'redis-node-3', port: 6379 },
+], {
+  redisOptions: {
+    password: 'your-password',
+  },
+});
+
+const queue = new Queue('myqueue', { connection: cluster });
+```
+
+## Connection Lifecycle
+
+The `RedisConnection` class manages connection state:
+
+```typescript
+// Connection states
+type ConnectionStatus = 'initializing' | 'ready' | 'closing' | 'closed';
+```
+
+### Waiting for Ready
+
+All BullMQ classes expose a `waitUntilReady()` method:
+
+```typescript
+const queue = new Queue('myqueue', { connection: { ... } });
+
+// Wait for Redis connection to be established
+await queue.waitUntilReady();
+
+// Now safe to use
+await queue.add('job', { data: 'value' });
+```
+
+### Closing Connections
+
+Always close connections gracefully:
+
+```typescript
+const queue = new Queue('myqueue', { connection: { ... } });
+const worker = new Worker('myqueue', async (job) => {}, { connection: { ... } });
+
+// Graceful shutdown
+await worker.close();
+await queue.close();
+```
+
+## Version Requirements
+
+<Info>
+- **Minimum Redis Version**: 5.0.0
+- **Recommended Redis Version**: 6.2.0 or higher
+</Info>
+
+BullMQ supports alternative Redis implementations:
+- **Dragonfly**: Full support
+- **Valkey**: Full support
+
+## Connection Events
+
+Listen to connection events:
+
+```typescript
+const queue = new Queue('myqueue', { connection: { ... } });
+
+queue.on('error', (err) => {
+  console.error('Redis connection error:', err);
+});
+
+queue.on('ready', () => {
+  console.log('Redis connection ready');
+});
+
+queue.on('close', () => {
+  console.log('Redis connection closed');
+});
+```
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Use Connection Pooling" icon="link">
+    Reuse connections when possible to reduce overhead, but create separate connections for blocking operations.
+  </Card>
+  
+  <Card title="Set maxRetriesPerRequest" icon="rotate">
+    Use `null` for workers (background) and a number for queues (foreground).
+  </Card>
+  
+  <Card title="Configure Redis Properly" icon="server">
+    Set `maxmemory-policy=noeviction` and ensure sufficient memory.
+  </Card>
+  
+  <Card title="Monitor Connections" icon="chart-line">
+    Track connection health and implement proper error handling.
+  </Card>
+</CardGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Queues" icon="list" href="/concepts/queues">
+    Learn how to create and manage queues
+  </Card>
+  
+  <Card title="Workers" icon="gears" href="/concepts/workers">
+    Process jobs with workers
+  </Card>
+</CardGroup>

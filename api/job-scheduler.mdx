@@ -1,0 +1,265 @@
+---
+title: 'JobScheduler'
+description: 'Manage scheduled jobs that repeat at specified intervals'
+---
+
+## Overview
+
+The JobScheduler class is used for managing repeatable jobs. It allows you to create, update, and remove job schedulers that automatically create jobs at specified intervals.
+
+## Constructor
+
+```typescript
+new JobScheduler(
+  name: string,
+  opts: RepeatBaseOptions
+)
+```
+
+<ParamField path="name" type="string" required>
+  The name of the queue
+</ParamField>
+
+<ParamField path="opts" type="RepeatBaseOptions" required>
+  Configuration options
+</ParamField>
+
+<Note>
+  The JobScheduler is typically accessed through the `Queue.jobScheduler` property rather than instantiated directly.
+</Note>
+
+## Example
+
+```typescript
+import { Queue } from 'bullmq';
+
+const queue = new Queue('myQueue', {
+  connection: {
+    host: 'localhost',
+    port: 6379,
+  },
+});
+
+// Access the job scheduler
+const scheduler = await queue.jobScheduler;
+
+// Or use the queue's upsertJobScheduler method
+await queue.upsertJobScheduler(
+  'my-scheduler',
+  { pattern: '0 * * * *' }, // Every hour
+  {
+    name: 'hourly-report',
+    data: { type: 'report' },
+  }
+);
+```
+
+## Methods
+
+### upsertJobScheduler
+
+Creates or updates a job scheduler.
+
+```typescript
+upsertJobScheduler<T, R, N>(
+  jobSchedulerId: string,
+  repeatOpts: RepeatOptions,
+  jobName: N,
+  jobData: T,
+  opts: JobSchedulerTemplateOptions,
+  config: { override: boolean; producerId?: string }
+): Promise<Job<T, R, N> | undefined>
+```
+
+<ParamField path="jobSchedulerId" type="string" required>
+  Unique identifier for the job scheduler
+</ParamField>
+
+<ParamField path="repeatOpts" type="RepeatOptions" required>
+  Repeat configuration options
+</ParamField>
+
+<ParamField path="jobName" type="string" required>
+  Name for jobs created by this scheduler
+</ParamField>
+
+<ParamField path="jobData" type="any" required>
+  Data for jobs created by this scheduler
+</ParamField>
+
+<ParamField path="opts" type="JobSchedulerTemplateOptions" required>
+  Job options template
+</ParamField>
+
+<ParamField path="config.override" type="boolean" required>
+  Whether to override existing scheduler
+</ParamField>
+
+<ParamField path="config.producerId" type="string">
+  Optional producer identifier
+</ParamField>
+
+### getScheduler
+
+Retrieves a job scheduler by ID.
+
+```typescript
+getScheduler<D>(id: string): Promise<JobSchedulerJson<D> | undefined>
+```
+
+<ParamField path="id" type="string" required>
+  The job scheduler ID
+</ParamField>
+
+<ResponseField name="scheduler" type="JobSchedulerJson | undefined">
+  The job scheduler data or undefined if not found
+</ResponseField>
+
+### getJobSchedulers
+
+Gets all job schedulers.
+
+```typescript
+getJobSchedulers<D>(
+  start?: number,
+  end?: number,
+  asc?: boolean
+): Promise<JobSchedulerJson<D>[]>
+```
+
+<ParamField path="start" type="number" default="0">
+  Offset of first scheduler to return
+</ParamField>
+
+<ParamField path="end" type="number" default="-1">
+  Offset of last scheduler to return
+</ParamField>
+
+<ParamField path="asc" type="boolean" default="false">
+  Return in ascending order by next execution time
+</ParamField>
+
+### getSchedulersCount
+
+Gets the number of job schedulers.
+
+```typescript
+getSchedulersCount(): Promise<number>
+```
+
+### removeJobScheduler
+
+Removes a job scheduler.
+
+```typescript
+removeJobScheduler(jobSchedulerId: string): Promise<number>
+```
+
+<ParamField path="jobSchedulerId" type="string" required>
+  The identifier of the job scheduler to remove
+</ParamField>
+
+<ResponseField name="removed" type="number">
+  Number of removed schedulers (0 or 1)
+</ResponseField>
+
+## RepeatOptions
+
+```typescript
+interface RepeatOptions {
+  pattern?: string;        // Cron pattern (e.g., '0 * * * *')
+  every?: number;          // Repeat every X milliseconds
+  limit?: number;          // Maximum number of iterations
+  startDate?: Date | string | number;  // Start date
+  endDate?: Date | string | number;    // End date
+  tz?: string;             // Timezone (e.g., 'America/New_York')
+  immediately?: boolean;   // Run immediately then repeat
+}
+```
+
+## JobSchedulerJson
+
+```typescript
+interface JobSchedulerJson<D = any> {
+  key: string;                  // Scheduler identifier
+  name: string;                 // Job name
+  next?: number;                // Next execution timestamp
+  iterationCount?: number;      // Number of iterations completed
+  limit?: number;               // Maximum iterations
+  startDate?: number;           // Start date timestamp
+  endDate?: number;             // End date timestamp
+  tz?: string;                  // Timezone
+  pattern?: string;             // Cron pattern
+  every?: number;               // Interval in milliseconds
+  offset?: number;              // Offset for every interval
+  template?: {
+    data?: D;                   // Job data template
+    opts?: JobsOptions;         // Job options template
+  };
+}
+```
+
+## Examples
+
+### Cron-based Scheduler
+
+```typescript
+// Run every day at midnight
+await queue.upsertJobScheduler(
+  'daily-cleanup',
+  { pattern: '0 0 * * *' },
+  {
+    name: 'cleanup',
+    data: { scope: 'full' },
+  }
+);
+```
+
+### Interval-based Scheduler
+
+```typescript
+// Run every 5 minutes
+await queue.upsertJobScheduler(
+  'health-check',
+  { every: 5 * 60 * 1000 },
+  {
+    name: 'check-health',
+    data: { service: 'api' },
+  }
+);
+```
+
+### Limited Iterations
+
+```typescript
+// Run 10 times, once per hour
+await queue.upsertJobScheduler(
+  'limited-task',
+  {
+    pattern: '0 * * * *',
+    limit: 10,
+  },
+  {
+    name: 'hourly-task',
+    data: {},
+  }
+);
+```
+
+### With Start and End Dates
+
+```typescript
+await queue.upsertJobScheduler(
+  'campaign',
+  {
+    pattern: '0 9 * * *',
+    startDate: new Date('2024-01-01'),
+    endDate: new Date('2024-12-31'),
+    tz: 'America/New_York',
+  },
+  {
+    name: 'daily-campaign',
+    data: { campaignId: '123' },
+  }
+);
+```

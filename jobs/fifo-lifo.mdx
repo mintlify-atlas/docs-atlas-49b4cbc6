@@ -1,0 +1,95 @@
+---
+title: "FIFO & LIFO"
+description: "Control the order in which jobs are processed"
+---
+
+## FIFO (First-In, First-Out)
+
+The FIFO type is the standard job processing order in BullMQ. Jobs are processed in the same order as they are inserted into the queue.
+
+<Note>
+The order is preserved independently of the number of processors you have. However, with multiple workers or concurrency greater than 1, jobs may complete in a slightly different order since some jobs take more time to complete than others.
+</Note>
+
+```typescript
+import { Queue } from 'bullmq';
+
+const myQueue = new Queue('Paint');
+
+// Add a job that will be processed after all others
+await myQueue.add('wall', { color: 'pink' });
+```
+
+### Job Options
+
+When adding jobs to the queue, you can specify various options to control their lifecycle:
+
+```typescript
+await myQueue.add(
+  'wall',
+  { color: 'pink' },
+  { removeOnComplete: true, removeOnFail: 1000 },
+);
+```
+
+In this example:
+- All completed jobs will be removed automatically
+- The last 1000 failed jobs will be kept in the queue
+
+### Default Job Options
+
+To apply the same options to all jobs, use `defaultJobOptions` when instantiating the Queue:
+
+```typescript
+const queue = new Queue('Paint', { 
+  defaultJobOptions: {
+    removeOnComplete: true, 
+    removeOnFail: 1000
+  }
+});
+```
+
+## LIFO (Last-In, First-Out)
+
+In some cases, it's useful to process jobs in LIFO fashion, where the newest jobs are processed **before** older ones.
+
+```typescript
+import { Queue } from 'bullmq';
+
+const myQueue = new Queue('Paint');
+
+// Add a job that will be processed before all others
+await myQueue.add('wall', { color: 'pink' }, { lifo: true });
+```
+
+<Warning>
+LIFO jobs bypass the normal queue order. Use this option carefully to avoid starving older jobs.
+</Warning>
+
+## Related Interfaces
+
+From `src/classes/job.ts:211`:
+
+```typescript
+interface JobsOptions {
+  /**
+   * If true, adds the job to the right of the queue instead of the left
+   * @defaultValue false
+   */
+  lifo?: boolean;
+  
+  /**
+   * If true, removes the job when it successfully completes
+   */
+  removeOnComplete?: boolean | number | KeepJobs;
+  
+  /**
+   * If true, removes the job when it fails after all attempts
+   */
+  removeOnFail?: boolean | number | KeepJobs;
+}
+```
+
+<Card title="API Reference" icon="code" href="https://api.docs.bullmq.io/classes/v5.Queue.html#add">
+  View the complete Add Job API Reference
+</Card>

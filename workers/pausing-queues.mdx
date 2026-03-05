@@ -1,0 +1,395 @@
+---
+title: 'Pausing Queues'
+description: 'Control worker job processing by pausing and resuming workers or queues'
+---
+
+BullMQ allows you to pause job processing at two levels: globally (entire queue) or locally (specific worker). Paused workers continue processing active jobs but don't fetch new ones.
+
+## Global Queue Pause
+
+Pause the entire queue so no workers pick up jobs:
+
+```typescript
+import { Queue } from 'bullmq';
+
+const queue = new Queue('queueName', {
+  connection: {
+    host: 'localhost',
+    port: 6379,
+  },
+});
+
+// Pause the queue globally
+await queue.pause();
+console.log('Queue paused - no workers will process jobs');
+
+// Resume the queue
+await queue.resume();
+console.log('Queue resumed - workers can process jobs again');
+```
+
+### How Global Pause Works
+
+- **All workers** connected to the queue stop fetching new jobs
+- Workers finish processing their current jobs
+- New jobs can still be added to the queue
+- Jobs remain in the `waiting` state until the queue is resumed
+
+### Use Cases for Global Pause
+
+- **Maintenance windows**: Pause processing during system upgrades
+- **Emergency stop**: Halt all processing due to critical issues
+- **Rate limiting**: Temporarily stop processing to avoid overwhelming downstream systems
+- **Deployment**: Pause before deploying new worker code
+
+```typescript
+import { Queue } from 'bullmq';
+
+const queue = new Queue('queueName');
+
+// Pause before maintenance
+await queue.pause();
+console.log('Queue paused for maintenance');
+
+// Perform maintenance
+await performDatabaseMigration();
+
+// Resume after maintenance
+await queue.resume();
+console.log('Queue resumed after maintenance');
+```
+
+## Local Worker Pause
+
+Pause a specific worker instance without affecting other workers:
+
+```typescript
+import { Worker } from 'bullmq';
+
+const worker = new Worker('queueName', async job => {
+  return await processJob(job);
+});
+
+// Pause this worker only
+await worker.pause();
+console.log('Worker paused - this worker won\'t fetch new jobs');
+
+// Resume this worker
+worker.resume();
+console.log('Worker resumed');
+```
+
+### Wait for Active Jobs to Complete
+
+By default, `worker.pause()` waits for active jobs to finish:
+
+```typescript
+// Wait for all active jobs to complete before pause resolves
+await worker.pause();
+console.log('Worker paused and all active jobs completed');
+```
+
+### Pause Immediately
+
+Pause without waiting for active jobs:
+
+```typescript
+// Pause immediately, don't wait for active jobs
+await worker.pause(true);
+console.log('Worker paused immediately');
+
+// Active jobs continue running but worker is marked as paused
+```
+
+<Info>
+  Passing `true` to `pause()` makes the worker stop fetching new jobs immediately, but active jobs continue processing.
+</Info>
+
+## Checking Pause State
+
+Check if a worker is paused:
+
+```typescript
+import { Worker } from 'bullmq';
+
+const worker = new Worker('queueName', processorFunction);
+
+// Check pause state
+if (worker.isPaused()) {
+  console.log('Worker is paused');
+} else {
+  console.log('Worker is active');
+}
+
+// Check if worker is running
+if (worker.isRunning()) {
+  console.log('Worker is running');
+}
+```
+
+## Worker Pause Events
+
+Listen to pause/resume events:
+
+```typescript
+import { Worker } from 'bullmq';
+
+const worker = new Worker('queueName', processorFunction);
+
+// Worker was paused
+worker.on('paused', () => {
+  console.log('Worker paused');
+  // Update monitoring/metrics
+});
+
+// Worker was resumed
+worker.on('resumed', () => {
+  console.log('Worker resumed');
+  // Update monitoring/metrics
+});
+
+// Pause the worker
+await worker.pause();
+```
+
+## Pause Multiple Workers
+
+Manage multiple workers:
+
+```typescript
+import { Worker } from 'bullmq';
+
+const workers: Worker[] = [
+  new Worker('queue1', processor1),
+  new Worker('queue2', processor2),
+  new Worker('queue3', processor3),
+];
+
+// Pause all workers
+const pauseAll = async () => {
+  console.log('Pausing all workers...');
+  await Promise.all(workers.map(w => w.pause()));
+  console.log('All workers paused');
+};
+
+// Resume all workers
+const resumeAll = () => {
+  console.log('Resuming all workers...');
+  workers.forEach(w => w.resume());
+  console.log('All workers resumed');
+};
+
+// Use in signal handlers
+process.on('SIGUSR2', pauseAll);
+process.on('SIGCONT', resumeAll);
+```
+
+## Conditional Pausing
+
+Pause workers based on system conditions:
+
+```typescript
+import { Worker } from 'bullmq';
+import os from 'os';
+
+const worker = new Worker('queueName', processorFunction);
+
+let isPaused = false;
+
+// Monitor system load and pause/resume accordingly
+setInterval(async () => {
+  const cpuLoad = os.loadavg()[0] / os.cpus().length;
+  
+  if (cpuLoad > 0.9 && !isPaused) {
+    console.log('High CPU load, pausing worker');
+    await worker.pause();
+    isPaused = true;
+  } else if (cpuLoad < 0.5 && isPaused) {
+    console.log('CPU load normal, resuming worker');
+    worker.resume();
+    isPaused = false;
+  }
+}, 30000); // Check every 30 seconds
+```
+
+## Pause vs Close
+
+Understand the difference:
+
+| Action | Fetch New Jobs | Active Jobs | Worker State | Reversible |
+|--------|----------------|-------------|--------------|------------|
+| **Pause** | No | Continue | Paused | Yes (resume) |
+| **Close** | No | Complete then stop | Closing/Closed | No |
+
+```typescript
+import { Worker } from 'bullmq';
+
+const worker = new Worker('queueName', processorFunction);
+
+// Pause - can resume later
+await worker.pause();
+worker.resume(); // ✅ Worker continues
+
+// Close - cannot resume
+await worker.close();
+worker.resume(); // ❌ No effect, worker is closed
+```
+
+## Pausing During Job Processing
+
+Workers can pause themselves during job processing:
+
+```typescript
+import { Worker } from 'bullmq';
+
+const worker = new Worker('queueName', async (job) => {
+  const result = await processJob(job.data);
+  
+  // Check result and pause worker if needed
+  if (result.shouldPause) {
+    console.log('Pausing worker due to job result');
+    await worker.pause();
+  }
+  
+  return result;
+});
+```
+
+<Warning>
+  Be careful when pausing a worker from within a job processor. The pause will take effect after the current job completes.
+</Warning>
+
+## Integration with Queue Draining
+
+Combine pausing with queue draining detection:
+
+```typescript
+import { Worker } from 'bullmq';
+
+const worker = new Worker('queueName', processorFunction);
+
+worker.on('drained', async () => {
+  console.log('Queue drained (no more jobs)');
+  
+  // Optionally pause when no jobs are available
+  await worker.pause();
+  
+  // Resume after some time or based on external trigger
+  setTimeout(() => {
+    console.log('Resuming worker to check for new jobs');
+    worker.resume();
+  }, 60000); // Resume after 1 minute
+});
+```
+
+## Best Practices
+
+<Steps>
+  <Step title="Use global pause for system-wide control">
+    Pause the queue (not individual workers) for maintenance or emergencies.
+  </Step>
+  
+  <Step title="Use local pause for gradual scaling down">
+    Pause individual workers when reducing capacity gradually.
+  </Step>
+  
+  <Step title="Wait for active jobs when possible">
+    Use `await worker.pause()` (without `true`) to ensure clean state.
+  </Step>
+  
+  <Step title="Monitor pause state">
+    Listen to `paused` and `resumed` events to update monitoring systems.
+  </Step>
+  
+  <Step title="Document pause reasons">
+    Log why workers/queues are paused for operational clarity:
+    ```typescript
+    console.log('Pausing queue: database maintenance');
+    await queue.pause();
+    ```
+  </Step>
+  
+  <Step title="Combine with graceful shutdown">
+    Pause before closing for smoother shutdowns:
+    ```typescript
+    await worker.pause();
+    await worker.close();
+    ```
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+### Worker Doesn't Resume
+
+**Cause**: Queue is paused globally.
+
+**Solution**: Check and resume the queue:
+
+```typescript
+const isPaused = await queue.isPaused();
+if (isPaused) {
+  await queue.resume();
+}
+```
+
+### Jobs Still Processing After Pause
+
+**Cause**: Active jobs continue even after pause.
+
+**Solution**: This is expected behavior. Wait for jobs to complete:
+
+```typescript
+// This waits for active jobs
+await worker.pause();
+
+// Or force immediate pause (jobs still run)
+await worker.pause(true);
+```
+
+### Pause Hangs Indefinitely
+
+**Cause**: A job is taking too long to complete.
+
+**Solution**: Implement a timeout:
+
+```typescript
+const pauseWithTimeout = Promise.race([
+  worker.pause(),
+  new Promise((_, reject) => 
+    setTimeout(() => reject(new Error('Pause timeout')), 30000)
+  ),
+]);
+
+try {
+  await pauseWithTimeout;
+} catch (error) {
+  console.error('Pause timed out, forcing pause');
+  await worker.pause(true);
+}
+```
+
+## Related Topics
+
+<CardGroup cols={2}>
+  <Card title="Graceful Shutdown" icon="power-off" href="/workers/graceful-shutdown">
+    Close workers properly
+  </Card>
+  <Card title="Concurrency" icon="layer-group" href="/workers/concurrency">
+    Control parallel processing
+  </Card>
+  <Card title="Stalled Jobs" icon="clock" href="/workers/stalled-jobs">
+    Handle stalled job recovery
+  </Card>
+  <Card title="Rate Limiting" icon="gauge" href="https://docs.bullmq.io/guide/rate-limiting">
+    Control processing rate
+  </Card>
+</CardGroup>
+
+## API Reference
+
+- [Queue.pause() API Reference](https://api.docs.bullmq.io/classes/v5.Queue.html#pause)
+- [Queue.resume() API Reference](https://api.docs.bullmq.io/classes/v5.Queue.html#resume)
+- [Worker.pause() API Reference](https://api.docs.bullmq.io/classes/v5.Worker.html#pause)
+- [Worker.resume() API Reference](https://api.docs.bullmq.io/classes/v5.Worker.html#resume)
+- [Worker.isPaused() API Reference](https://api.docs.bullmq.io/classes/v5.Worker.html#isPaused)

@@ -1,0 +1,390 @@
+---
+title: NestJS Queue Events
+description: Listen to queue events in NestJS using QueueEventsListener
+---
+
+Queue events allow you to monitor what's happening in your queues without the overhead of running a full worker. Use the `QueueEventsListener` to listen to events like job completion, failure, and progress updates.
+
+## Basic Setup
+
+<Steps>
+  <Step title="Create a QueueEventsListener class">
+    Use the `@QueueEventsListener` decorator to create an events listener:
+    
+    ```typescript
+    import {
+      QueueEventsListener,
+      QueueEventsHost,
+      OnQueueEvent,
+    } from '@nestjs/bullmq';
+    
+    @QueueEventsListener('audio')
+    export class AudioQueueEvents extends QueueEventsHost {
+      @OnQueueEvent('completed')
+      onCompleted({
+        jobId,
+        returnvalue,
+      }: {
+        jobId: string;
+        returnvalue: string;
+        prev?: string;
+      }) {
+        console.log(`Job ${jobId} completed with result:`, returnvalue);
+      }
+    }
+    ```
+  </Step>
+  
+  <Step title="Register as a provider">
+    Add the events listener to your module's providers:
+    
+    ```typescript
+    import { Module } from '@nestjs/common';
+    import { BullModule } from '@nestjs/bullmq';
+    import { AudioQueueEvents } from './audio.queue-events';
+    
+    @Module({
+      imports: [
+        BullModule.registerQueue({
+          name: 'audio',
+          connection: {
+            host: 'localhost',
+            port: 6379,
+          },
+        }),
+      ],
+      providers: [AudioQueueEvents],
+    })
+    export class AudioModule {}
+    ```
+  </Step>
+</Steps>
+
+## Available Events
+
+Listen to various queue events using the `@OnQueueEvent` decorator:
+
+<Tabs>
+  <Tab title="completed">
+    Triggered when a job completes successfully:
+    
+    ```typescript
+    @OnQueueEvent('completed')
+    onCompleted({
+      jobId,
+      returnvalue,
+      prev,
+    }: {
+      jobId: string;
+      returnvalue: string;
+      prev?: string;
+    }) {
+      console.log(`Job ${jobId} completed`);
+      console.log('Result:', returnvalue);
+    }
+    ```
+  </Tab>
+  
+  <Tab title="failed">
+    Triggered when a job fails:
+    
+    ```typescript
+    @OnQueueEvent('failed')
+    onFailed({
+      jobId,
+      failedReason,
+      prev,
+    }: {
+      jobId: string;
+      failedReason: string;
+      prev?: string;
+    }) {
+      console.error(`Job ${jobId} failed:`, failedReason);
+    }
+    ```
+  </Tab>
+  
+  <Tab title="progress">
+    Triggered when a job reports progress:
+    
+    ```typescript
+    @OnQueueEvent('progress')
+    onProgress({
+      jobId,
+      data,
+    }: {
+      jobId: string;
+      data: number | object;
+    }) {
+      console.log(`Job ${jobId} progress:`, data);
+    }
+    ```
+  </Tab>
+  
+  <Tab title="active">
+    Triggered when a job becomes active:
+    
+    ```typescript
+    @OnQueueEvent('active')
+    onActive({
+      jobId,
+      prev,
+    }: {
+      jobId: string;
+      prev?: string;
+    }) {
+      console.log(`Job ${jobId} started processing`);
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Complete Example
+
+```typescript audio.queue-events.ts
+import {
+  QueueEventsListener,
+  QueueEventsHost,
+  OnQueueEvent,
+} from '@nestjs/bullmq';
+import { Injectable, Logger } from '@nestjs/common';
+
+@QueueEventsListener('audio')
+export class AudioQueueEvents extends QueueEventsHost {
+  private readonly logger = new Logger(AudioQueueEvents.name);
+  
+  @OnQueueEvent('completed')
+  onCompleted({
+    jobId,
+    returnvalue,
+  }: {
+    jobId: string;
+    returnvalue: string;
+    prev?: string;
+  }) {
+    this.logger.log(`Audio job ${jobId} completed successfully`);
+    this.logger.debug('Result:', returnvalue);
+  }
+  
+  @OnQueueEvent('failed')
+  onFailed({
+    jobId,
+    failedReason,
+  }: {
+    jobId: string;
+    failedReason: string;
+    prev?: string;
+  }) {
+    this.logger.error(`Audio job ${jobId} failed: ${failedReason}`);
+  }
+  
+  @OnQueueEvent('progress')
+  onProgress({
+    jobId,
+    data,
+  }: {
+    jobId: string;
+    data: number | object;
+  }) {
+    this.logger.debug(`Audio job ${jobId} progress:`, data);
+  }
+  
+  @OnQueueEvent('active')
+  onActive({
+    jobId,
+  }: {
+    jobId: string;
+    prev?: string;
+  }) {
+    this.logger.log(`Audio job ${jobId} started processing`);
+  }
+  
+  @OnQueueEvent('waiting')
+  onWaiting({ jobId }: { jobId: string }) {
+    this.logger.debug(`Audio job ${jobId} is waiting`);
+  }
+  
+  @OnQueueEvent('delayed')
+  onDelayed({
+    jobId,
+    delay,
+  }: {
+    jobId: string;
+    delay: number;
+  }) {
+    this.logger.log(`Audio job ${jobId} delayed by ${delay}ms`);
+  }
+  
+  @OnQueueEvent('stalled')
+  onStalled({ jobId }: { jobId: string }) {
+    this.logger.warn(`Audio job ${jobId} stalled`);
+  }
+}
+```
+
+## Event Types
+
+All available queue events:
+
+<AccordionGroup>
+  <Accordion title="Job Lifecycle Events">
+    - `waiting` - Job is waiting to be processed
+    - `active` - Job has started processing
+    - `completed` - Job completed successfully
+    - `failed` - Job failed
+    - `progress` - Job reported progress
+    - `delayed` - Job is delayed
+    - `stalled` - Job stalled (worker lost lock)
+  </Accordion>
+  
+  <Accordion title="Queue Management Events">
+    - `paused` - Queue was paused
+    - `resumed` - Queue was resumed
+    - `cleaned` - Old jobs were cleaned
+    - `drained` - Queue was drained
+  </Accordion>
+  
+  <Accordion title="Job Management Events">
+    - `removed` - Job was removed
+    - `retries-exhausted` - Job exhausted all retry attempts
+  </Accordion>
+</AccordionGroup>
+
+## Multiple Queue Listeners
+
+Create separate event listeners for different queues:
+
+```typescript
+// audio.queue-events.ts
+@QueueEventsListener('audio')
+export class AudioQueueEvents extends QueueEventsHost {
+  @OnQueueEvent('completed')
+  onCompleted(args: any) {
+    // Handle audio queue completion
+  }
+}
+
+// video.queue-events.ts
+@QueueEventsListener('video')
+export class VideoQueueEvents extends QueueEventsHost {
+  @OnQueueEvent('completed')
+  onCompleted(args: any) {
+    // Handle video queue completion
+  }
+}
+
+// app.module.ts
+@Module({
+  imports: [
+    BullModule.registerQueue({ name: 'audio' }),
+    BullModule.registerQueue({ name: 'video' }),
+  ],
+  providers: [AudioQueueEvents, VideoQueueEvents],
+})
+export class AppModule {}
+```
+
+## Integration with Services
+
+Inject services into your event listeners:
+
+```typescript
+import {
+  QueueEventsListener,
+  QueueEventsHost,
+  OnQueueEvent,
+} from '@nestjs/bullmq';
+import { Injectable } from '@nestjs/common';
+import { NotificationService } from './notification.service';
+
+@Injectable()
+@QueueEventsListener('orders')
+export class OrderQueueEvents extends QueueEventsHost {
+  constructor(private notificationService: NotificationService) {
+    super();
+  }
+  
+  @OnQueueEvent('completed')
+  async onCompleted({
+    jobId,
+    returnvalue,
+  }: {
+    jobId: string;
+    returnvalue: any;
+  }) {
+    // Send notification when order is processed
+    await this.notificationService.sendOrderConfirmation(
+      returnvalue.orderId
+    );
+  }
+  
+  @OnQueueEvent('failed')
+  async onFailed({
+    jobId,
+    failedReason,
+  }: {
+    jobId: string;
+    failedReason: string;
+  }) {
+    // Alert admins about failed orders
+    await this.notificationService.alertAdmins(
+      `Order job ${jobId} failed: ${failedReason}`
+    );
+  }
+}
+```
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Use Logger" icon="terminal">
+    Use NestJS Logger for consistent logging:
+    ```typescript
+    private readonly logger = new Logger(MyEvents.name);
+    ```
+  </Card>
+  
+  <Card title="Keep Handlers Fast" icon="gauge-high">
+    Event handlers should be quick - delegate heavy work to other services
+  </Card>
+  
+  <Card title="Error Handling" icon="shield">
+    Handle errors in event listeners:
+    ```typescript
+    @OnQueueEvent('completed')
+    async onCompleted(args: any) {
+      try {
+        await this.doSomething();
+      } catch (error) {
+        this.logger.error(error);
+      }
+    }
+    ```
+  </Card>
+  
+  <Card title="Separate Concerns" icon="layer-group">
+    Use different event listeners for different responsibilities
+  </Card>
+</CardGroup>
+
+## Related Resources
+
+<CardGroup cols={2}>
+  <Card title="NestJS Integration" icon="nest" href="/integrations/nestjs">
+    Learn about NestJS integration basics
+  </Card>
+  <Card title="NestJS Producers" icon="plus" href="/integrations/nestjs-producers">
+    Add jobs to queues in NestJS
+  </Card>
+</CardGroup>
+
+## External Documentation
+
+<CardGroup cols={2}>
+  <Card title="NestJS Queues" icon="book" href="https://docs.nestjs.com/techniques/queues">
+    Official NestJS queue documentation
+  </Card>
+  <Card title="Queue Events API" icon="code" href="https://api.docs.bullmq.io/interfaces/v5.QueueEventsListener.html">
+    BullMQ Queue Events API reference
+  </Card>
+</CardGroup>
