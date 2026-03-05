@@ -272,6 +272,7 @@
     "UnrecoverableError",
     "DelayedError",
     "RateLimitError",
-    "WaitingChildrenError"
+    "WaitingChildrenError",
+    "WaitingError"
   ]
 }

@@ -1,0 +1,122 @@
+---
+title: "WaitingError"
+description: "Error thrown when a job is manually moved to wait or prioritized state"
+---
+
+The `WaitingError` is a special error class used to signal that a job has been manually moved back to the waiting state during processing. This error prevents the worker from trying to complete or fail the job.
+
+## Class Definition
+
+```typescript
+class WaitingError extends Error {
+  constructor(message?: string)
+}
+```
+
+## Usage
+
+When you manually move a job to wait using `job.moveToWait()`, you must throw `WaitingError` to signal to the worker that the job has been intentionally moved and should not be marked as completed or failed.
+
+```typescript
+import { Worker, WaitingError } from 'bullmq';
+
+const worker = new Worker(
+  'queueName',
+  async (job: Job, token?: string) => {
+    try {
+      await doSomething();
+    } catch (error) {
+      // Move job back to wait for retry
+      await job.moveToWait(token);
+      
+      // Must throw WaitingError to signal the worker
+      throw new WaitingError();
+    }
+  },
+  { connection },
+);
+```
+
+## When to Use
+
+<CardGroup cols={2}>
+  <Card title="Manual Retry" icon="rotate">
+    Retry a job immediately without incrementing attempts counter
+  </Card>
+  <Card title="Rate Limiting" icon="gauge">
+    Move job back to wait when hitting external rate limits
+  </Card>
+  <Card title="Resource Contention" icon="lock">
+    Retry when a required resource is temporarily unavailable
+  </Card>
+  <Card title="Conditional Processing" icon="code-branch">
+    Re-queue job based on dynamic conditions
+  </Card>
+</CardGroup>
+
+## Important Notes
+
+<Warning>
+Always throw `WaitingError` after calling `job.moveToWait()`. If you don't throw this error, the worker will try to complete the job, causing conflicts.
+</Warning>
+
+<Info>
+`WaitingError` does not increment the `attemptsMade` counter, but it does increment `attemptsStarted`. This is useful for implementing custom retry logic without exhausting the configured retry attempts.
+</Info>
+
+## Example with Rate Limiting
+
+```typescript
+import { Worker, WaitingError } from 'bullmq';
+
+const worker = new Worker(
+  'api-calls',
+  async (job: Job, token?: string) => {
+    try {
+      const response = await callExternalAPI(job.data);
+      return response;
+    } catch (error) {
+      if (error.response?.status === 429) {
+        // Rate limited - move back to wait
+        const retryAfter = error.response.headers['retry-after'];
+        await queue.rateLimit(retryAfter * 1000);
+        await job.moveToWait(token);
+        
+        // Signal that job was moved to wait
+        throw new WaitingError();
+      }
+      
+      // Other errors trigger normal retry logic
+      throw error;
+    }
+  },
+  { connection },
+);
+```
+
+## Comparison with Other Errors
+
+| Error Type | Job State | Attempts Counter | Use Case |
+|------------|-----------|------------------|----------|
+| `WaitingError` | wait | Not incremented | Manual retry |
+| `DelayedError` | delayed | Not incremented | Manual delay |
+| `RateLimitError` | wait | Not incremented | Rate limiting |
+| `WaitingChildrenError` | waiting-children | Not incremented | Parent-child dependencies |
+| Regular `Error` | failed → wait | Incremented | Standard retry |
+
+## Related Resources
+
+<CardGroup cols={2}>
+  <Card title="Manual Retrying Pattern" icon="rotate" href="/patterns/manual-retrying">
+    Learn about manual retry strategies
+  </Card>
+  <Card title="Job.moveToWait API" icon="code" href="/api/job">
+    API reference for moveToWait method
+  </Card>
+  <Card title="Rate Limiting" icon="gauge" href="/advanced/rate-limiting">
+    Implement rate limiting strategies
+  </Card>
+  <Card title="Process Step Jobs" icon="list-check" href="/patterns/process-step-jobs">
+    Multi-step job processing patterns
+  </Card>
+</CardGroup>

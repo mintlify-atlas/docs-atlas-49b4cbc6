@@ -251,7 +251,8 @@
               "api/errors/unrecoverable-error",
               "api/errors/delayed-error",
               "api/errors/rate-limit-error",
-              "api/errors/waiting-children-error"
+              "api/errors/waiting-children-error",
+              "api/errors/waiting-error"
             ]
           }
         ]
